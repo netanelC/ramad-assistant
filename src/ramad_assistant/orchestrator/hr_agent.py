@@ -8,6 +8,14 @@ class HRAgent:
         self.repo = repo
 
     def handle_message(self, text: str) -> str:
+        # 0. Record 1-on-1 meeting: e.g. "ביצעתי שיחת 1-על-1 עם דניאל כהן: דיברנו על יעדים אישיים"
+        if any(w in text for w in ["שיחת 1-על-1", "שיחה 1-על-1", "שיחה אישית"]) and any(w in text for w in ["ביצעתי", "קיימתי", "תיעדתי", "רשום", "סיימתי"]):
+            match = re.search(r"(?:ביצעתי|קיימתי|תיעדתי|רשום|סיימתי)\s*שיח(?:ת|ה)\s*(?:1-על-1|אישית)\s*(?:עם)?\s*([^:]+):\s*(.+)$", text)
+            if match:
+                soldier_name = match.group(1).strip()
+                notes = match.group(2).strip()
+                return self.record_one_on_one(soldier_name, notes)
+
         # 1. Update mentorship contract: e.g. "עדכן חוזה חניכה לדניאל כהן: יעד אישי: ביטחון עצמי, יעד מקצועי: מומחה פייתון"
         if "חוזה חניכה" in text and any(w in text for w in ["עדכן", "קבע", "הגדר", "רשום", "שמור", "צור"]):
             match = re.search(r"חוזה\s*חניכה\s*(?:ל|עבור)?\s*([^:]+):\s*(.+)$", text)
@@ -64,6 +72,21 @@ class HRAgent:
             return self.get_soldier_profile(soldier_name)
 
         return "👥 סוכן כוח אדם ופיתוח: לשירותך בבירור פרטי חיילים, חלוקת צוותים, נע\"תים וחוזי חניכה."
+
+    def record_one_on_one(self, soldier_name: str, notes: str) -> str:
+        soldier = self.repo.get_soldier_by_name(soldier_name)
+        if not soldier or soldier.id is None:
+            return f"⚠️ לא נמצא חייל בשם '{soldier_name}' במערכת."
+
+        contract = self.repo.record_one_on_one_meeting(soldier_id=soldier.id, notes=notes)
+        next_due = contract.get("next_one_on_one_due") if contract else "לא ידוע"
+
+        return (
+            f"✅ *תועדה שיחת 1-על-1 בהצלחה!*\n"
+            f"• *חייל*: {soldier.full_name}\n"
+            f"• *תאריך היעד לשיחה הבאה*: {next_due}\n"
+            f"• *סיכום*: {notes}"
+        )
 
     def update_mentorship_contract(self, soldier_name: str, goals_text: str) -> str:
         soldier = self.repo.get_soldier_by_name(soldier_name)
