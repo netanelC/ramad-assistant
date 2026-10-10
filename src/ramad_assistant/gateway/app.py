@@ -6,6 +6,7 @@ from fastapi.responses import JSONResponse
 from ramad_assistant.adapters.base import IMessengerAdapter
 from ramad_assistant.adapters.telegram import TelegramAdapter
 from ramad_assistant.core.config import get_settings
+from ramad_assistant.core.voice import IVoiceProcessor, GeminiVoiceProcessor
 from ramad_assistant.db.repository import TaskRepository
 from ramad_assistant.orchestrator.graph import Orchestrator
 
@@ -16,6 +17,7 @@ def create_app(
     allowed_user_ids: Optional[list[str]] = None,
     task_repo: Optional[TaskRepository] = None,
     orchestrator: Optional[Orchestrator] = None,
+    voice_processor: Optional[IVoiceProcessor] = None,
     api_secret: Optional[str] = None,
 ) -> FastAPI:
     settings = get_settings()
@@ -27,6 +29,7 @@ def create_app(
 
     app = FastAPI(title="Ramad Command Assistant Gateway")
     adapter = messenger_adapter or TelegramAdapter(bot_token=effective_bot_token)
+    effective_voice_processor = voice_processor or GeminiVoiceProcessor()
 
     effective_task_repo = task_repo or TaskRepository()
     effective_orchestrator = orchestrator or Orchestrator(task_repo=effective_task_repo)
@@ -45,12 +48,24 @@ def create_app(
             if unified_message.user_id not in effective_allowed_ids:
                 raise HTTPException(status_code=403, detail="Unauthorized user")
 
+        # Handle incoming voice note (Voice-In / Text-Out)
+        if unified_message.media_url and unified_message.media_type and unified_message.media_type.startswith("audio"):
+            audio_bytes = await adapter.download_file(unified_message.media_url)
+            if audio_bytes:
+                transcription = await effective_voice_processor.process_audio(
+                    audio_bytes=audio_bytes,
+                    mime_type=unified_message.media_type,
+                )
+                if transcription:
+                    unified_message.text = transcription
+
         # Process through LangGraph Orchestrator
         if unified_message.text and unified_message.user_id:
             response_text = await effective_orchestrator.process_message(
                 user_id=unified_message.user_id,
                 text=unified_message.text,
             )
+            # Response is strictly returned as formatted text (Voice-In / Text-Out)
             await adapter.send_message(unified_message.user_id, response_text)
 
         return JSONResponse(status_code=200, content={"status": "ok"})
