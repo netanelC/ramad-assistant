@@ -2,7 +2,7 @@
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
-from ramad_assistant.db.models import PersonalTask, Team, Soldier
+from ramad_assistant.db.models import PersonalTask, Team, Soldier, ReflectionLog
 
 
 class TaskRepository:
@@ -90,6 +90,21 @@ class TaskRepository:
                     last_postpone_reason TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
+                )
+            """)
+
+            # 6. Reflection Logs table
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS reflection_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_date TEXT NOT NULL,
+                    q1_automation_answer TEXT,
+                    q2_resolve_answer TEXT,
+                    q3_people_answer TEXT,
+                    points_to_preserve TEXT DEFAULT '[]',
+                    points_to_improve TEXT DEFAULT '[]',
+                    summary_insights TEXT,
+                    created_at TEXT NOT NULL
                 )
             """)
             conn.commit()
@@ -495,3 +510,47 @@ class TaskRepository:
             )
             conn.commit()
         return self.get_task(task_id)
+
+    # --- Reflection Logs Methods ---
+    def save_reflection_log(self, log: ReflectionLog) -> ReflectionLog:
+        now = datetime.now(timezone.utc).isoformat()
+        import json
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO reflection_logs (
+                    session_date, q1_automation_answer, q2_resolve_answer,
+                    q3_people_answer, points_to_preserve, points_to_improve,
+                    summary_insights, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    log.session_date,
+                    log.q1_automation_answer,
+                    log.q2_resolve_answer,
+                    log.q3_people_answer,
+                    json.dumps(log.points_to_preserve, ensure_ascii=False),
+                    json.dumps(log.points_to_improve, ensure_ascii=False),
+                    log.summary_insights,
+                    now,
+                ),
+            )
+            conn.commit()
+            log.id = cursor.lastrowid
+            log.created_at = now
+            return log
+
+    def get_reflection_logs(self, limit: int = 10) -> list[dict[str, Any]]:
+        import json
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM reflection_logs ORDER BY id DESC LIMIT ?", (limit,)
+            ).fetchall()
+            results = []
+            for r in rows:
+                d = dict(r)
+                d["points_to_preserve"] = json.loads(d["points_to_preserve"]) if d.get("points_to_preserve") else []
+                d["points_to_improve"] = json.loads(d["points_to_improve"]) if d.get("points_to_improve") else []
+                results.append(d)
+            return results
+

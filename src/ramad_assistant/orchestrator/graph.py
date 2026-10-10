@@ -31,6 +31,9 @@ class Orchestrator:
         self.hr_agent = HRAgent(repo=task_repo)
         self.mentor_agent = CommandMentorAgent(vector_store=self.vector_store)
         self.checkpointer = checkpointer or InMemorySaver()
+        self.active_reflection_thread: Optional[str] = None
+        self.reflection_step: int = 0
+        self.reflection_data: dict[str, Any] = {}
         self.graph = self._build_graph()
 
     def _build_graph(self) -> Any:
@@ -109,10 +112,70 @@ class Orchestrator:
 
         return builder.compile(checkpointer=self.checkpointer)
 
+    async def start_biweekly_reflection(self, user_id: str, date_str: Optional[str] = None) -> str:
+        from datetime import datetime, timezone
+        d = date_str or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        ref_thread_id = f"thread_reflection_{d}"
+        self.active_reflection_thread = ref_thread_id
+        self.reflection_step = 1
+        self.reflection_data = {
+            "session_date": d,
+            "q1_answer": "",
+            "q2_answer": "",
+            "q3_answer": "",
+        }
+        return self.mentor_agent.start_debrief_prompt()
+
     async def process_message(
         self, user_id: str, text: str, thread_id: Optional[str] = None
     ) -> str:
-        tid = thread_id or f"thread_user_{user_id}"
+        # Dynamic ADR-0002 thread routing
+        is_operational = self._is_operational_command(text)
+
+        if not thread_id:
+            if self.active_reflection_thread and not is_operational:
+                # Part of ongoing reflection session
+                tid = self.active_reflection_thread
+            else:
+                tid = f"thread_user_{user_id}"
+        else:
+            tid = thread_id
+
+        # If routed to active reflection thread and debrief is in progress
+        if tid == self.active_reflection_thread and not is_operational:
+            reply, next_step, summary_data = self.mentor_agent.process_debrief_turn(
+                current_step=self.reflection_step,
+                user_answer=text,
+                q1_answer=self.reflection_data.get("q1_answer"),
+                q2_answer=self.reflection_data.get("q2_answer"),
+            )
+            if self.reflection_step == 1:
+                self.reflection_data["q1_answer"] = text
+            elif self.reflection_step == 2:
+                self.reflection_data["q2_answer"] = text
+            elif self.reflection_step == 3:
+                self.reflection_data["q3_answer"] = text
+
+            self.reflection_step = next_step
+
+            if summary_data:
+                # Save to reflection_logs
+                from ramad_assistant.db.models import ReflectionLog
+                log_entry = ReflectionLog(
+                    session_date=self.reflection_data["session_date"],
+                    q1_automation_answer=summary_data["q1_answer"],
+                    q2_resolve_answer=summary_data["q2_answer"],
+                    q3_people_answer=summary_data["q3_answer"],
+                    points_to_preserve=summary_data["points_to_preserve"],
+                    points_to_improve=summary_data["points_to_improve"],
+                    summary_insights=summary_data["summary_insights"],
+                )
+                self.task_repo.save_reflection_log(log_entry)
+                self.active_reflection_thread = None  # Debrief completed
+
+            return reply
+
+        # Otherwise route through standard LangGraph user thread
         config = {"configurable": {"thread_id": tid}}
         initial_state: OrchestratorState = {
             "user_id": user_id,
@@ -123,3 +186,11 @@ class Orchestrator:
         }
         result = await self.graph.ainvoke(initial_state, config=config)
         return result.get("response_text", "")
+
+    def _is_operational_command(self, text: str) -> bool:
+        """Determines if text is an explicit operational command rather than debrief continuation."""
+        task_keywords = ["תפתח משימה", "צור משימה", "משימה חדשה", "תג\"ב", "תגבים", "תדחה", "דחה", "סיימתי משימה", "בטל משימה"]
+        hr_keywords = ["חייל", "חיילים", "צוות", "פרופיל", "משתחרר", "נע\"ת", "חוזה חניכה", "1-על-1", "שיחה אישית"]
+        query_keywords = ["משימות פתוחות", "משימות להיום", "הצג משימות", "רשימת משימות"]
+        return any(k in text for k in task_keywords + hr_keywords + query_keywords)
+

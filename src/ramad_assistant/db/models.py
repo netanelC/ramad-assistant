@@ -65,3 +65,20 @@ class PersonalTask(BaseModel):
     updated_at: str = Field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
+
+
+class ReflectionLog(BaseModel):
+    id: Optional[int] = None
+    session_date: str = Field(
+        default_factory=lambda: datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    )
+    q1_automation_answer: Optional[str] = None
+    q2_resolve_answer: Optional[str] = None
+    q3_people_answer: Optional[str] = None
+    points_to_preserve: list[str] = Field(default_factory=list)
+    points_to_improve: list[str] = Field(default_factory=list)
+    summary_insights: Optional[str] = None
+    created_at: str = Field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
+

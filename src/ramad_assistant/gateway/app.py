@@ -85,4 +85,16 @@ def create_app(
 
         return JSONResponse(status_code=200, content={"status": "briefing_sent"})
 
+    @app.post("/cron/biweekly-reflection")
+    async def trigger_biweekly_reflection(request: Request) -> JSONResponse:
+        secret = request.headers.get("X-API-Secret")
+        if not secret or secret != effective_api_secret:
+            raise HTTPException(status_code=401, detail="Invalid API Secret")
+
+        target_user = effective_allowed_ids[0] if effective_allowed_ids else "default"
+        prompt_text = await effective_orchestrator.start_biweekly_reflection(user_id=target_user)
+        await adapter.send_message(target_user, prompt_text)
+
+        return JSONResponse(status_code=200, content={"status": "reflection_initiated"})
+
     return app

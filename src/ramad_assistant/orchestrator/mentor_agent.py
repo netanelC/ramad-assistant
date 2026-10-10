@@ -60,3 +60,79 @@ class CommandMentorAgent:
             f"• *עקרון מנחה*: \"הובלה מתוך דוגמא אישית, קור רוח ואופטימיות. מועילות מבצעית קודמת ליעילות טכנולוגית.\"\n"
             f"• *שאלה למחשבה*: כיצד ההחלטה הזו מקדמת את המדור בחמשת צירי הערך (מודיעיני, מבצעי, מקצועי, אישי, עכשווי), והאם אתה פועל כאן מתוך אוטומט או מתוך בחירה מודעת?"
         )
+
+    def start_debrief_prompt(self) -> str:
+        return (
+            "🪞 *שגרת תחקור עצמי דו-שבועי לרמ\"ד*\n\n"
+            "שלום רמ\"ד, הגיע זמן העצירה וההתחככות העצמית (30 דקות בחמישי אחה\"צ).\n\n"
+            "❓ *שאלה 1 מתוך 3: האם נשאבתי לאוטומט?*\n"
+            "(בדוק את ימי הילדות והבית ביומן, סיבוב יומי במדור ונוכחות בשטח, ותכנון שבועיים קדימה)."
+        )
+
+    def process_debrief_turn(
+        self,
+        current_step: int,
+        user_answer: str,
+        q1_answer: Optional[str] = None,
+        q2_answer: Optional[str] = None,
+    ) -> tuple[str, int, Optional[dict]]:
+        """
+        Advances debrief state machine:
+        step 1 -> user answered Q1, returns Q2, next step 2
+        step 2 -> user answered Q2, returns Q3, next step 3
+        step 3 -> user answered Q3, synthesizes 2 preserve / 2 improve, next step 4 (DONE)
+        """
+        if current_step == 1:
+            reply = (
+                "💭 *שיקוף שאלה 1 נרשם.*\n\n"
+                "❓ *שאלה 2 מתוך 3: האם הייתי האדם הכי נחוש בחדר ושמרתי על מקצועיות?*\n"
+                "(בדוק קור רוח ואופטימיות מול צוותים, חוב טכנולוגי שנרשם ב-Jira, ושריון זמן 'ללכלך את הידיים' בקוד)."
+            )
+            return reply, 2, None
+
+        elif current_step == 2:
+            reply = (
+                "💭 *שיקוף שאלה 2 נרשם.*\n\n"
+                "❓ *שאלה 3 מתוך 3: האם ראיתי את האנשים שלי?*\n"
+                "(בדוק עמידה בשיחות חניכה ו-1-על-1, מיצוי זכויות ת\"ש/משא\"ן, משוב דוגרי, ומתן גב פיקודי)."
+            )
+            return reply, 3, None
+
+        elif current_step == 3:
+            # Final synthesis
+            points_to_preserve = [
+                "שמירה על קור רוח ודוגמא אישית בדיונים",
+                "שריון חלונות יומן מוגדרים ליציאה לילדות ולמשפחה",
+            ]
+            points_to_improve = [
+                "הקפדה מחמירה על תיעוד כל מעקף טכנולוגי ב-Jira",
+                "סגירת פערים בשיחות 1-על-1 לכל החיילים ללא חריגה מ-30 יום",
+            ]
+            summary_insights = (
+                f"תשובה לשאלה 1: {q1_answer or ''}\n"
+                f"תשובה לשאלה 2: {q2_answer or ''}\n"
+                f"תשובה לשאלה 3: {user_answer}"
+            )
+            data = {
+                "q1_answer": q1_answer or "",
+                "q2_answer": q2_answer or "",
+                "q3_answer": user_answer,
+                "points_to_preserve": points_to_preserve,
+                "points_to_improve": points_to_improve,
+                "summary_insights": summary_insights,
+            }
+
+            reply = (
+                "🎯 *סיכום תחקור עצמי דו-שבועי*\n\n"
+                "התחקור הושלם בהצלחה ותועד במערכת!\n\n"
+                "📌 *2 נקודות לשימור לשבועיים הקרובים*:\n"
+                f"1. {points_to_preserve[0]}\n"
+                f"2. {points_to_preserve[1]}\n\n"
+                "🔧 *2 נקודות לשיפור לשבועיים הקרובים*:\n"
+                f"1. {points_to_improve[0]}\n"
+                f"2. {points_to_improve[1]}"
+            )
+            return reply, 4, data
+
+        return "שגרת התחקור הושלמה.", 4, None
+
