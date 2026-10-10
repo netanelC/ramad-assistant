@@ -43,6 +43,50 @@ class TaskAgent:
         _, reply = self.parse_and_create_task(text)
         return reply
 
+    def build_daily_briefing(self) -> str:
+        tasks = self.task_repo.list_tasks(status="OPEN")
+        now = datetime.now(timezone.utc)
+        today_date_str = now.strftime("%Y-%m-%d")
+
+        overdue: list[PersonalTask] = []
+        today_tasks: list[PersonalTask] = []
+        critical_48h: list[PersonalTask] = []
+
+        for t in tasks:
+            task_date_str = t.tagab_at[:10]
+            if task_date_str < today_date_str:
+                overdue.append(t)
+            elif task_date_str == today_date_str:
+                today_tasks.append(t)
+            else:
+                if t.priority == "CRITICAL":
+                    critical_48h.append(t)
+
+        sections: list[str] = ["🌅 *דוח בוקר יומי לרמ\"ד*\n"]
+
+        if overdue:
+            sections.append(f"🚨 *תג\"בים בחריגה (Overdue)* ({len(overdue)}):")
+            for t in overdue:
+                sections.append(f"• [#{t.id}] *{t.title}* (פג תוקף: {t.tagab_at})")
+            sections.append("")
+
+        if today_tasks:
+            sections.append(f"📋 *תג\"בים להיום* ({len(today_tasks)}):")
+            for t in today_tasks:
+                sections.append(f"• [#{t.id}] *{t.title}* ({t.tagab_at})")
+            sections.append("")
+
+        if critical_48h:
+            sections.append(f"⏳ *תג\"בים קריטיים ל-48 השעות הקרובות* ({len(critical_48h)}):")
+            for t in critical_48h:
+                sections.append(f"• [#{t.id}] *{t.title}* ({t.tagab_at})")
+            sections.append("")
+
+        if not overdue and not today_tasks and not critical_48h:
+            sections.append("✨ אין תג\"בים דחופים או חורגים להיום. יום פורה ומוצלח!")
+
+        return "\n".join(sections).strip()
+
     def _handle_postpone(self, text: str) -> str:
         match = re.search(r"(?:משימה\s*(?:#|מספר\s*)?|#)(\d+)", text)
         if not match:
@@ -53,7 +97,6 @@ class TaskAgent:
         if not task:
             return f"⚠️ לא נמצאה משימה עם מזהה #{task_id}."
 
-        # Extract reason: must have one of ["בגלל", "עקב", "בשל", "מסיבת", "סיבה:"]
         reason_match = re.search(r"(?:בגלל|עקב|בשל|מסיבת|סיבה:)\s*(.+)$", text)
         if not reason_match:
             return "⚠️ *חובת רישום סיבה*: לא ניתן לדחות תג\"ב ללא ציון סיבה (קו אדום פיקודי). נא ציין את סיבת הדחייה (לדוגמה: 'בגלל בלת\"ם מבצעי')."

@@ -16,12 +16,14 @@ def create_app(
     allowed_user_ids: Optional[list[str]] = None,
     task_repo: Optional[TaskRepository] = None,
     orchestrator: Optional[Orchestrator] = None,
+    api_secret: Optional[str] = None,
 ) -> FastAPI:
     settings = get_settings()
     effective_bot_token = bot_token or settings.telegram_bot_token
     effective_allowed_ids = (
         allowed_user_ids if allowed_user_ids is not None else settings.allowed_telegram_user_ids
     )
+    effective_api_secret = api_secret or settings.api_secret
 
     app = FastAPI(title="Ramad Command Assistant Gateway")
     adapter = messenger_adapter or TelegramAdapter(bot_token=effective_bot_token)
@@ -52,5 +54,19 @@ def create_app(
             await adapter.send_message(unified_message.user_id, response_text)
 
         return JSONResponse(status_code=200, content={"status": "ok"})
+
+    @app.post("/cron/daily-briefing")
+    async def trigger_daily_briefing(request: Request) -> JSONResponse:
+        secret = request.headers.get("X-API-Secret")
+        if not secret or secret != effective_api_secret:
+            raise HTTPException(status_code=401, detail="Invalid API Secret")
+
+        briefing_text = effective_orchestrator.task_agent.build_daily_briefing()
+
+        # Send to primary section head recipient
+        target_user = effective_allowed_ids[0] if effective_allowed_ids else "default"
+        await adapter.send_message(target_user, briefing_text)
+
+        return JSONResponse(status_code=200, content={"status": "briefing_sent"})
 
     return app
