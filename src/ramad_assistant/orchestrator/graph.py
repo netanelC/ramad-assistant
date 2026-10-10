@@ -4,8 +4,10 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import InMemorySaver
 
 from ramad_assistant.db.repository import TaskRepository
+from ramad_assistant.db.doctrine_vector import DoctrineVectorStore
 from ramad_assistant.orchestrator.task_agent import TaskAgent
 from ramad_assistant.orchestrator.hr_agent import HRAgent
+from ramad_assistant.orchestrator.mentor_agent import CommandMentorAgent
 
 
 class OrchestratorState(TypedDict):
@@ -20,11 +22,14 @@ class Orchestrator:
     def __init__(
         self,
         task_repo: TaskRepository,
+        vector_store: Optional[DoctrineVectorStore] = None,
         checkpointer: Optional[Any] = None,
     ):
         self.task_repo = task_repo
+        self.vector_store = vector_store or DoctrineVectorStore(repo=task_repo)
         self.task_agent = TaskAgent(task_repo=task_repo)
         self.hr_agent = HRAgent(repo=task_repo)
+        self.mentor_agent = CommandMentorAgent(vector_store=self.vector_store)
         self.checkpointer = checkpointer or InMemorySaver()
         self.graph = self._build_graph()
 
@@ -41,6 +46,10 @@ class Orchestrator:
             # HR & People routing
             if any(k in text for k in ["חייל", "חיילים", "צוות", "פרופיל", "משתחרר", "נע\"ת", "חוזה חניכה", "חניכה", "1-על-1", "שיחה אישית"]):
                 return {"current_agent": "hr_agent"}
+
+            # Philosophical / Command Mentor / Reflection routing
+            if any(k in text for k in ["מראה פיקודית", "דילמה", "מתלבט", "עומס", "שחיקה", "טובע", "מתוסכל", "תפיסה פיקודית", "עקרונות"]):
+                return {"current_agent": "mentor_agent"}
 
             # General task routing
             if any(k in text for k in ["משימה", "משימות", "תזכורת", "task", "tagab", "postpone"]):
@@ -60,7 +69,13 @@ class Orchestrator:
             reply = self.hr_agent.handle_message(text)
             return {"response_text": reply}
 
-        # 4. Echo / General Node
+        # 4. Mentor Agent Node
+        async def mentor_node(state: OrchestratorState) -> dict[str, Any]:
+            text = state["input_text"]
+            reply = await self.mentor_agent.consult(text)
+            return {"response_text": reply}
+
+        # 5. Echo / General Node
         def echo_node(state: OrchestratorState) -> dict[str, Any]:
             text = state["input_text"]
             return {"response_text": f"קיבלתי: {text}"}
@@ -68,6 +83,7 @@ class Orchestrator:
         builder.add_node("supervisor", supervisor_node)
         builder.add_node("task_agent", task_node)
         builder.add_node("hr_agent", hr_node)
+        builder.add_node("mentor_agent", mentor_node)
         builder.add_node("echo_agent", echo_node)
 
         builder.add_edge(START, "supervisor")
@@ -81,12 +97,14 @@ class Orchestrator:
             {
                 "task_agent": "task_agent",
                 "hr_agent": "hr_agent",
+                "mentor_agent": "mentor_agent",
                 "echo_agent": "echo_agent",
             },
         )
 
         builder.add_edge("task_agent", END)
         builder.add_edge("hr_agent", END)
+        builder.add_edge("mentor_agent", END)
         builder.add_edge("echo_agent", END)
 
         return builder.compile(checkpointer=self.checkpointer)

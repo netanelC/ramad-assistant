@@ -33,6 +33,7 @@ def create_app(
 
     effective_task_repo = task_repo or TaskRepository()
     effective_orchestrator = orchestrator or Orchestrator(task_repo=effective_task_repo)
+    app.state.orchestrator = effective_orchestrator
 
     @app.get("/health")
     async def health_check() -> dict[str, str]:
