@@ -13,6 +13,13 @@ class TelegramAdapter(IMessengerAdapter):
     def __init__(self, bot_token: str):
         self.bot_token = bot_token
         self.api_base_url = f"https://api.telegram.org/bot{bot_token}"
+        self.file_base_url = f"https://api.telegram.org/file/bot{bot_token}"
+        self.http_client: Optional[httpx.AsyncClient] = None
+
+    async def _get_client(self) -> httpx.AsyncClient:
+        if self.http_client is not None:
+            return self.http_client
+        return httpx.AsyncClient()
 
     async def parse_inbound(self, payload: dict[str, Any]) -> UnifiedMessage:
         message_data = payload.get("message") or payload.get("edited_message") or {}
@@ -44,9 +51,33 @@ class TelegramAdapter(IMessengerAdapter):
             "parse_mode": "Markdown",
         }
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(url, json=payload, timeout=10.0)
-                return response.status_code == 200
+            client = await self._get_client()
+            response = await client.post(url, json=payload, timeout=10.0)
+            return response.status_code == 200
         except Exception as e:
             logger.error("Failed to send Telegram message to %s: %s", recipient_id, e)
             return False
+
+    async def download_file(self, file_id: str) -> Optional[bytes]:
+        url = f"{self.api_base_url}/getFile?file_id={file_id}"
+        try:
+            client = await self._get_client()
+            res = await client.get(url, timeout=15.0)
+            if res.status_code != 200:
+                logger.error("Telegram getFile returned status %d", res.status_code)
+                return None
+            data = res.json()
+            if not data.get("ok") or not data.get("result"):
+                return None
+            file_path = data["result"].get("file_path")
+            if not file_path:
+                return None
+
+            download_url = f"{self.file_base_url}/{file_path}"
+            file_res = await client.get(download_url, timeout=30.0)
+            if file_res.status_code != 200:
+                return None
+            return file_res.content
+        except Exception as e:
+            logger.error("Failed to download file %s: %s", file_id, e)
+            return None
