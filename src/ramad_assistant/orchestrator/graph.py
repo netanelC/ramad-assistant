@@ -32,7 +32,7 @@ class Orchestrator:
         # 1. Supervisor / Router Node
         def supervisor_node(state: OrchestratorState) -> dict[str, Any]:
             text = state["input_text"]
-            if any(k in text for k in ["משימה", "משימות", "תג\"ב", "תגבים", "תזכורת", "task", "tagab"]):
+            if any(k in text for k in ["משימה", "משימות", "תג\"ב", "תגבים", "תזכורת", "task", "tagab", "דחה", "תדחה", "postpone"]):
                 return {"current_agent": "task_agent"}
             return {"current_agent": "echo_agent"}
 
