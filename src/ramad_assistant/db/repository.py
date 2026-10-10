@@ -1,6 +1,6 @@
 """Repository layer for tasks, teams, soldiers, and naat history."""
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 from ramad_assistant.db.models import PersonalTask, Team, Soldier
 
@@ -142,7 +142,6 @@ class TaskRepository:
             soldier.created_at = now
             soldier.updated_at = now
 
-            # If created with initial na'at, record in history
             if soldier.current_naat:
                 conn.execute(
                     """
@@ -220,17 +219,45 @@ class TaskRepository:
                 for row in rows
             ]
 
+    def get_upcoming_releases(self, days_ahead: int = 90) -> list[Soldier]:
+        now = datetime.now(timezone.utc)
+        today_str = now.strftime("%Y-%m-%d")
+        limit_str = (now + timedelta(days=days_ahead)).strftime("%Y-%m-%d")
+
+        query = """
+            SELECT * FROM soldiers
+            WHERE release_date IS NOT NULL
+              AND release_date >= ?
+              AND release_date <= ?
+            ORDER BY release_date ASC
+        """
+        with self._get_connection() as conn:
+            rows = conn.execute(query, (today_str, limit_str)).fetchall()
+            return [
+                Soldier(
+                    id=row["id"],
+                    full_name=row["full_name"],
+                    team_id=row["team_id"],
+                    service_type=row["service_type"],
+                    release_date=row["release_date"],
+                    current_naat=row["current_naat"],
+                    education=row["education"],
+                    commander_notes=row["commander_notes"],
+                    created_at=row["created_at"],
+                    updated_at=row["updated_at"],
+                )
+                for row in rows
+            ]
+
     # --- Na'at History Methods ---
     def assign_naat(self, soldier_id: int, duty_name: str, start_date: Optional[str] = None) -> bool:
         date_str = start_date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
         now = datetime.now(timezone.utc).isoformat()
         with self._get_connection() as conn:
-            # 1. Close current active duty in naat_history
             conn.execute(
                 "UPDATE naat_history SET end_date = ? WHERE soldier_id = ? AND end_date IS NULL",
                 (date_str, soldier_id),
             )
-            # 2. Insert new duty in naat_history
             conn.execute(
                 """
                 INSERT INTO naat_history (soldier_id, duty_name, start_date, end_date)
@@ -238,7 +265,6 @@ class TaskRepository:
                 """,
                 (soldier_id, duty_name, date_str),
             )
-            # 3. Update current_naat on soldier
             conn.execute(
                 "UPDATE soldiers SET current_naat = ?, updated_at = ? WHERE id = ?",
                 (duty_name, now, soldier_id),

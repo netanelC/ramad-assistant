@@ -8,7 +8,16 @@ class HRAgent:
         self.repo = repo
 
     def handle_message(self, text: str) -> str:
-        # 1. Assign na'at: e.g. "שבץ נע"ת לאורי לוי: אחראי הדרכה"
+        # 1. Upcoming releases query: e.g. "מי משתחרר ב-3 החודשים הקרובים?"
+        if any(w in text for w in ["משתחרר", "משתחררים", "שחרור"]):
+            days_ahead = 90
+            months = 3
+            if any(k in text for k in ["6", "חצי שנה", "180"]):
+                days_ahead = 180
+                months = 6
+            return self.get_upcoming_releases_report(days_ahead=days_ahead, months_label=months)
+
+        # 2. Assign na'at: e.g. "שבץ נע"ת לאורי לוי: אחראי הדרכה"
         if any(w in text for w in ["שבץ נע\"ת", "הקצה נע\"ת", "עדכן נע\"ת"]):
             assign_match = re.search(r"(?:שבץ|הקצה|עדכן)\s*נע\"ת\s*(?:ל|עבור)?\s*([^:]+):\s*(.+)$", text)
             if assign_match:
@@ -16,7 +25,7 @@ class HRAgent:
                 duty_name = assign_match.group(2).strip()
                 return self.assign_naat_to_soldier(soldier_name, duty_name)
 
-        # 2. Query na'at history: e.g. "היסטוריית נע"ת אורי לוי"
+        # 3. Query na'at history: e.g. "היסטוריית נע"ת אורי לוי"
         if "היסטוריית נע\"ת" in text or "היסטוריה של נע\"ת" in text or "נע\"תים של" in text:
             name_match = re.search(r"(?:היסטוריית נע\"ת|נע\"תים של)\s*(?:ל|של)?\s*([^\?\.\n]+)", text)
             if name_match:
@@ -24,14 +33,14 @@ class HRAgent:
                 soldier_name = re.sub(r"[\?\.\!]", "", soldier_name).strip()
                 return self.get_soldier_naat_history(soldier_name)
 
-        # 3. Query soldiers by team
+        # 4. Query soldiers by team
         team_match = re.search(r"(?:בצוות|צוות)\s*([^\?\.\n]+)", text)
         if team_match and ("חיילים" in text or "מי בצוות" in text or "רשימת" in text):
             team_name = team_match.group(1).strip()
             team_name = re.sub(r"[\?\.\!]", "", team_name).strip()
             return self.list_soldiers_by_team(team_name)
 
-        # 4. Query individual soldier profile
+        # 5. Query individual soldier profile
         soldier_match = re.search(r"(?:פרופיל(?:\s+חייל)?|מי זה|פרטי חייל)\s*([^\?\.\n]+)", text)
         if soldier_match:
             soldier_name = soldier_match.group(1).strip()
@@ -39,6 +48,17 @@ class HRAgent:
             return self.get_soldier_profile(soldier_name)
 
         return "👥 סוכן כוח אדם ופיתוח: לשירותך בבירור פרטי חיילים, חלוקת צוותים, נע\"תים וחוזי חניכה."
+
+    def get_upcoming_releases_report(self, days_ahead: int, months_label: int) -> str:
+        soldiers = self.repo.get_upcoming_releases(days_ahead=days_ahead)
+        if not soldiers:
+            return f"🎖️ אין חיילים המשתחררים ב-{months_label} החודשים הקרובים."
+
+        lines = [f"🎖️ *חיילים משתחררים ב-{months_label} החודשים הקרובים* ({len(soldiers)}):"]
+        for s in soldiers:
+            lines.append(f"• *{s.full_name}* [{s.service_type}] - תאריך שחרור: {s.release_date}")
+
+        return "\n".join(lines)
 
     def assign_naat_to_soldier(self, soldier_name: str, duty_name: str) -> str:
         soldier = self.repo.get_soldier_by_name(soldier_name)
