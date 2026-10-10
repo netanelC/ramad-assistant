@@ -1,7 +1,7 @@
-"""Repository layer for tasks, teams, and soldiers."""
+"""Repository layer for tasks, teams, soldiers, and naat history."""
 import sqlite3
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 from ramad_assistant.db.models import PersonalTask, Team, Soldier
 
 
@@ -44,7 +44,20 @@ class TaskRepository:
                 )
             """)
 
-            # 3. Personal Tasks table
+            # 3. Naat History table
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS naat_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    soldier_id INTEGER NOT NULL,
+                    duty_name TEXT NOT NULL,
+                    start_date TEXT NOT NULL,
+                    end_date TEXT,
+                    notes TEXT,
+                    FOREIGN KEY (soldier_id) REFERENCES soldiers(id) ON DELETE CASCADE
+                )
+            """)
+
+            # 4. Personal Tasks table
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS personal_tasks (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -125,11 +138,40 @@ class TaskRepository:
                     now,
                 ),
             )
-            conn.commit()
             soldier.id = cursor.lastrowid
             soldier.created_at = now
             soldier.updated_at = now
+
+            # If created with initial na'at, record in history
+            if soldier.current_naat:
+                conn.execute(
+                    """
+                    INSERT INTO naat_history (soldier_id, duty_name, start_date, end_date, notes)
+                    VALUES (?, ?, ?, NULL, 'Initial assignment')
+                    """,
+                    (soldier.id, soldier.current_naat, now[:10]),
+                )
+
+            conn.commit()
             return soldier
+
+    def get_soldier(self, soldier_id: int) -> Optional[Soldier]:
+        with self._get_connection() as conn:
+            row = conn.execute("SELECT * FROM soldiers WHERE id = ?", (soldier_id,)).fetchone()
+            if not row:
+                return None
+            return Soldier(
+                id=row["id"],
+                full_name=row["full_name"],
+                team_id=row["team_id"],
+                service_type=row["service_type"],
+                release_date=row["release_date"],
+                current_naat=row["current_naat"],
+                education=row["education"],
+                commander_notes=row["commander_notes"],
+                created_at=row["created_at"],
+                updated_at=row["updated_at"],
+            )
 
     def get_soldier_by_name(self, full_name: str) -> Optional[Soldier]:
         with self._get_connection() as conn:
@@ -177,6 +219,40 @@ class TaskRepository:
                 )
                 for row in rows
             ]
+
+    # --- Na'at History Methods ---
+    def assign_naat(self, soldier_id: int, duty_name: str, start_date: Optional[str] = None) -> bool:
+        date_str = start_date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        now = datetime.now(timezone.utc).isoformat()
+        with self._get_connection() as conn:
+            # 1. Close current active duty in naat_history
+            conn.execute(
+                "UPDATE naat_history SET end_date = ? WHERE soldier_id = ? AND end_date IS NULL",
+                (date_str, soldier_id),
+            )
+            # 2. Insert new duty in naat_history
+            conn.execute(
+                """
+                INSERT INTO naat_history (soldier_id, duty_name, start_date, end_date)
+                VALUES (?, ?, ?, NULL)
+                """,
+                (soldier_id, duty_name, date_str),
+            )
+            # 3. Update current_naat on soldier
+            conn.execute(
+                "UPDATE soldiers SET current_naat = ?, updated_at = ? WHERE id = ?",
+                (duty_name, now, soldier_id),
+            )
+            conn.commit()
+            return True
+
+    def get_naat_history(self, soldier_id: int) -> list[dict[str, Any]]:
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM naat_history WHERE soldier_id = ? ORDER BY start_date ASC",
+                (soldier_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
 
     # --- Personal Tasks Methods ---
     def create_task(self, task: PersonalTask) -> PersonalTask:

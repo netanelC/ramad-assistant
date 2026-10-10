@@ -8,15 +8,30 @@ class HRAgent:
         self.repo = repo
 
     def handle_message(self, text: str) -> str:
-        # 1. Query soldiers by team
+        # 1. Assign na'at: e.g. "שבץ נע"ת לאורי לוי: אחראי הדרכה"
+        if any(w in text for w in ["שבץ נע\"ת", "הקצה נע\"ת", "עדכן נע\"ת"]):
+            assign_match = re.search(r"(?:שבץ|הקצה|עדכן)\s*נע\"ת\s*(?:ל|עבור)?\s*([^:]+):\s*(.+)$", text)
+            if assign_match:
+                soldier_name = assign_match.group(1).strip()
+                duty_name = assign_match.group(2).strip()
+                return self.assign_naat_to_soldier(soldier_name, duty_name)
+
+        # 2. Query na'at history: e.g. "היסטוריית נע"ת אורי לוי"
+        if "היסטוריית נע\"ת" in text or "היסטוריה של נע\"ת" in text or "נע\"תים של" in text:
+            name_match = re.search(r"(?:היסטוריית נע\"ת|נע\"תים של)\s*(?:ל|של)?\s*([^\?\.\n]+)", text)
+            if name_match:
+                soldier_name = name_match.group(1).strip()
+                soldier_name = re.sub(r"[\?\.\!]", "", soldier_name).strip()
+                return self.get_soldier_naat_history(soldier_name)
+
+        # 3. Query soldiers by team
         team_match = re.search(r"(?:בצוות|צוות)\s*([^\?\.\n]+)", text)
         if team_match and ("חיילים" in text or "מי בצוות" in text or "רשימת" in text):
             team_name = team_match.group(1).strip()
-            # clean punctuation
             team_name = re.sub(r"[\?\.\!]", "", team_name).strip()
             return self.list_soldiers_by_team(team_name)
 
-        # 2. Query individual soldier profile
+        # 4. Query individual soldier profile
         soldier_match = re.search(r"(?:פרופיל(?:\s+חייל)?|מי זה|פרטי חייל)\s*([^\?\.\n]+)", text)
         if soldier_match:
             soldier_name = soldier_match.group(1).strip()
@@ -24,6 +39,35 @@ class HRAgent:
             return self.get_soldier_profile(soldier_name)
 
         return "👥 סוכן כוח אדם ופיתוח: לשירותך בבירור פרטי חיילים, חלוקת צוותים, נע\"תים וחוזי חניכה."
+
+    def assign_naat_to_soldier(self, soldier_name: str, duty_name: str) -> str:
+        soldier = self.repo.get_soldier_by_name(soldier_name)
+        if not soldier or soldier.id is None:
+            return f"⚠️ לא נמצא חייל בשם '{soldier_name}' במערכת."
+
+        old_duty = soldier.current_naat or "ללא נע\"ת"
+        self.repo.assign_naat(soldier_id=soldier.id, duty_name=duty_name)
+
+        return (
+            f"✅ *עודכן נע\"ת עבור {soldier.full_name}*: *{duty_name}*\n"
+            f"• נע\"ת קודם ({old_duty}) תועד בהיסטוריה."
+        )
+
+    def get_soldier_naat_history(self, soldier_name: str) -> str:
+        soldier = self.repo.get_soldier_by_name(soldier_name)
+        if not soldier or soldier.id is None:
+            return f"⚠️ לא נמצא חייל בשם '{soldier_name}' במערכת."
+
+        history = self.repo.get_naat_history(soldier.id)
+        if not history:
+            return f"📋 אין היסטוריית נע\"תים מתועדת עבור {soldier.full_name}."
+
+        lines = [f"📋 *היסטוריית נע\"ת עבור {soldier.full_name}*:"]
+        for h in history:
+            end_label = f"עד {h['end_date']}" if h.get("end_date") else "פעיל כיום"
+            lines.append(f"• *{h['duty_name']}* ({h['start_date']} - {end_label})")
+
+        return "\n".join(lines)
 
     def get_soldier_profile(self, name: str) -> str:
         soldier = self.repo.get_soldier_by_name(name)
@@ -53,7 +97,6 @@ class HRAgent:
     def list_soldiers_by_team(self, team_name: str) -> str:
         team = self.repo.get_team_by_name(team_name)
         if not team:
-            # Try fuzzy or clean 'צוות 1'
             if not team_name.startswith("צוות "):
                 team = self.repo.get_team_by_name(f"צוות {team_name}")
             if not team:
