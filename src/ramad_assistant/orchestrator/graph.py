@@ -5,6 +5,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 
 from ramad_assistant.db.repository import TaskRepository
 from ramad_assistant.orchestrator.task_agent import TaskAgent
+from ramad_assistant.orchestrator.hr_agent import HRAgent
 
 
 class OrchestratorState(TypedDict):
@@ -23,6 +24,7 @@ class Orchestrator:
     ):
         self.task_repo = task_repo
         self.task_agent = TaskAgent(task_repo=task_repo)
+        self.hr_agent = HRAgent(repo=task_repo)
         self.checkpointer = checkpointer or InMemorySaver()
         self.graph = self._build_graph()
 
@@ -32,8 +34,18 @@ class Orchestrator:
         # 1. Supervisor / Router Node
         def supervisor_node(state: OrchestratorState) -> dict[str, Any]:
             text = state["input_text"]
-            if any(k in text for k in ["משימה", "משימות", "תג\"ב", "תגבים", "תזכורת", "task", "tagab", "דחה", "תדחה", "postpone"]):
+            # Explicit task / tagab actions take precedence
+            if any(k in text for k in ["תפתח משימה", "צור משימה", "משימה חדשה", "תג\"ב", "תגבים", "תדחה", "דחה", "סיימתי משימה", "בטל משימה"]):
                 return {"current_agent": "task_agent"}
+
+            # HR & People routing
+            if any(k in text for k in ["חייל", "חיילים", "צוות", "פרופיל", "משתחרר", "נע\"ת"]):
+                return {"current_agent": "hr_agent"}
+
+            # General task routing
+            if any(k in text for k in ["משימה", "משימות", "תזכורת", "task", "tagab", "postpone"]):
+                return {"current_agent": "task_agent"}
+
             return {"current_agent": "echo_agent"}
 
         # 2. Task Agent Node
@@ -42,13 +54,20 @@ class Orchestrator:
             reply = self.task_agent.handle_message(text)
             return {"response_text": reply}
 
-        # 3. Echo / General Node
+        # 3. HR Agent Node
+        def hr_node(state: OrchestratorState) -> dict[str, Any]:
+            text = state["input_text"]
+            reply = self.hr_agent.handle_message(text)
+            return {"response_text": reply}
+
+        # 4. Echo / General Node
         def echo_node(state: OrchestratorState) -> dict[str, Any]:
             text = state["input_text"]
             return {"response_text": f"קיבלתי: {text}"}
 
         builder.add_node("supervisor", supervisor_node)
         builder.add_node("task_agent", task_node)
+        builder.add_node("hr_agent", hr_node)
         builder.add_node("echo_agent", echo_node)
 
         builder.add_edge(START, "supervisor")
@@ -61,11 +80,13 @@ class Orchestrator:
             route_next,
             {
                 "task_agent": "task_agent",
+                "hr_agent": "hr_agent",
                 "echo_agent": "echo_agent",
             },
         )
 
         builder.add_edge("task_agent", END)
+        builder.add_edge("hr_agent", END)
         builder.add_edge("echo_agent", END)
 
         return builder.compile(checkpointer=self.checkpointer)

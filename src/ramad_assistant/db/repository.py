@@ -1,8 +1,8 @@
-"""Repository layer for personal tasks."""
+"""Repository layer for tasks, teams, and soldiers."""
 import sqlite3
 from datetime import datetime, timezone
 from typing import Optional
-from ramad_assistant.db.models import PersonalTask
+from ramad_assistant.db.models import PersonalTask, Team, Soldier
 
 
 class TaskRepository:
@@ -16,6 +16,35 @@ class TaskRepository:
 
     def init_db(self) -> None:
         with self._get_connection() as conn:
+            # 1. Teams table
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS teams (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL UNIQUE,
+                    team_lead_name TEXT,
+                    description TEXT,
+                    created_at TEXT NOT NULL
+                )
+            """)
+
+            # 2. Soldiers table
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS soldiers (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    full_name TEXT NOT NULL,
+                    team_id INTEGER,
+                    service_type TEXT NOT NULL,
+                    release_date TEXT,
+                    current_naat TEXT,
+                    education TEXT,
+                    commander_notes TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE SET NULL
+                )
+            """)
+
+            # 3. Personal Tasks table
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS personal_tasks (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -34,6 +63,122 @@ class TaskRepository:
             """)
             conn.commit()
 
+    # --- Teams Methods ---
+    def create_team(self, team: Team) -> Team:
+        now = datetime.now(timezone.utc).isoformat()
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                "INSERT INTO teams (name, team_lead_name, description, created_at) VALUES (?, ?, ?, ?)",
+                (team.name, team.team_lead_name, team.description, now),
+            )
+            conn.commit()
+            team.id = cursor.lastrowid
+            team.created_at = now
+            return team
+
+    def get_team_by_name(self, name: str) -> Optional[Team]:
+        with self._get_connection() as conn:
+            row = conn.execute("SELECT * FROM teams WHERE name = ?", (name,)).fetchone()
+            if not row:
+                return None
+            return Team(
+                id=row["id"],
+                name=row["name"],
+                team_lead_name=row["team_lead_name"],
+                description=row["description"],
+                created_at=row["created_at"],
+            )
+
+    def get_team(self, team_id: int) -> Optional[Team]:
+        with self._get_connection() as conn:
+            row = conn.execute("SELECT * FROM teams WHERE id = ?", (team_id,)).fetchone()
+            if not row:
+                return None
+            return Team(
+                id=row["id"],
+                name=row["name"],
+                team_lead_name=row["team_lead_name"],
+                description=row["description"],
+                created_at=row["created_at"],
+            )
+
+    # --- Soldiers Methods ---
+    def create_soldier(self, soldier: Soldier) -> Soldier:
+        now = datetime.now(timezone.utc).isoformat()
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO soldiers (
+                    full_name, team_id, service_type, release_date,
+                    current_naat, education, commander_notes, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    soldier.full_name,
+                    soldier.team_id,
+                    soldier.service_type,
+                    soldier.release_date,
+                    soldier.current_naat,
+                    soldier.education,
+                    soldier.commander_notes,
+                    now,
+                    now,
+                ),
+            )
+            conn.commit()
+            soldier.id = cursor.lastrowid
+            soldier.created_at = now
+            soldier.updated_at = now
+            return soldier
+
+    def get_soldier_by_name(self, full_name: str) -> Optional[Soldier]:
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM soldiers WHERE full_name LIKE ?",
+                (f"%{full_name}%",),
+            ).fetchone()
+            if not row:
+                return None
+            return Soldier(
+                id=row["id"],
+                full_name=row["full_name"],
+                team_id=row["team_id"],
+                service_type=row["service_type"],
+                release_date=row["release_date"],
+                current_naat=row["current_naat"],
+                education=row["education"],
+                commander_notes=row["commander_notes"],
+                created_at=row["created_at"],
+                updated_at=row["updated_at"],
+            )
+
+    def list_soldiers(self, team_id: Optional[int] = None) -> list[Soldier]:
+        query = "SELECT * FROM soldiers"
+        params: list[int] = []
+        if team_id is not None:
+            query += " WHERE team_id = ?"
+            params.append(team_id)
+        query += " ORDER BY full_name ASC"
+
+        with self._get_connection() as conn:
+            rows = conn.execute(query, params).fetchall()
+            return [
+                Soldier(
+                    id=row["id"],
+                    full_name=row["full_name"],
+                    team_id=row["team_id"],
+                    service_type=row["service_type"],
+                    release_date=row["release_date"],
+                    current_naat=row["current_naat"],
+                    education=row["education"],
+                    commander_notes=row["commander_notes"],
+                    created_at=row["created_at"],
+                    updated_at=row["updated_at"],
+                )
+                for row in rows
+            ]
+
+    # --- Personal Tasks Methods ---
     def create_task(self, task: PersonalTask) -> PersonalTask:
         now = datetime.now(timezone.utc).isoformat()
         with self._get_connection() as conn:

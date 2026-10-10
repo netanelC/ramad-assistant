@@ -4,6 +4,33 @@ from typing import Optional
 from pydantic import BaseModel, Field
 
 
+class Team(BaseModel):
+    id: Optional[int] = None
+    name: str
+    team_lead_name: Optional[str] = None
+    description: Optional[str] = None
+    created_at: str = Field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
+
+
+class Soldier(BaseModel):
+    id: Optional[int] = None
+    full_name: str
+    team_id: Optional[int] = None
+    service_type: str = "MANDATORY"  # MANDATORY, CAREER, RESERVE, CONSULTANT
+    release_date: Optional[str] = None  # YYYY-MM-DD
+    current_naat: Optional[str] = None
+    education: Optional[str] = None
+    commander_notes: Optional[str] = None
+    created_at: str = Field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
+    updated_at: str = Field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
+
+
 class PersonalTask(BaseModel):
     id: Optional[int] = None
     title: str
