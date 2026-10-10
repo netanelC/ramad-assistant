@@ -29,9 +29,10 @@ def create_app(
 
     app = FastAPI(title="Ramad Command Assistant Gateway")
     adapter = messenger_adapter or TelegramAdapter(bot_token=effective_bot_token)
-    effective_voice_processor = voice_processor or GeminiVoiceProcessor()
+    effective_voice_processor = voice_processor or GeminiVoiceProcessor(api_key=settings.gemini_api_key)
 
-    effective_task_repo = task_repo or TaskRepository()
+    effective_task_repo = task_repo or TaskRepository(db_url=settings.database_url)
+    effective_task_repo.init_db()
     effective_orchestrator = orchestrator or Orchestrator(task_repo=effective_task_repo)
     app.state.orchestrator = effective_orchestrator
 
