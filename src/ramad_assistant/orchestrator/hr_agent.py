@@ -8,7 +8,23 @@ class HRAgent:
         self.repo = repo
 
     def handle_message(self, text: str) -> str:
-        # 1. Upcoming releases query: e.g. "מי משתחרר ב-3 החודשים הקרובים?"
+        # 1. Update mentorship contract: e.g. "עדכן חוזה חניכה לדניאל כהן: יעד אישי: ביטחון עצמי, יעד מקצועי: מומחה פייתון"
+        if "חוזה חניכה" in text and any(w in text for w in ["עדכן", "קבע", "הגדר", "רשום", "שמור", "צור"]):
+            match = re.search(r"חוזה\s*חניכה\s*(?:ל|עבור)?\s*([^:]+):\s*(.+)$", text)
+            if match:
+                soldier_name = match.group(1).strip()
+                goals_text = match.group(2).strip()
+                return self.update_mentorship_contract(soldier_name, goals_text)
+
+        # 2. Query mentorship contract: e.g. "הצג חוזה חניכה דניאל כהן"
+        if "חוזה חניכה" in text and any(w in text for w in ["הצג", "מהו", "פרטי", "בדוק", "סטטוס"]):
+            match = re.search(r"חוזה\s*חניכה\s*(?:ל|של)?\s*([^\?\.\n]+)", text)
+            if match:
+                soldier_name = match.group(1).strip()
+                soldier_name = re.sub(r"[\?\.\!]", "", soldier_name).strip()
+                return self.get_mentorship_contract_report(soldier_name)
+
+        # 3. Upcoming releases query: e.g. "מי משתחרר ב-3 החודשים הקרובים?"
         if any(w in text for w in ["משתחרר", "משתחררים", "שחרור"]):
             days_ahead = 90
             months = 3
@@ -17,7 +33,7 @@ class HRAgent:
                 months = 6
             return self.get_upcoming_releases_report(days_ahead=days_ahead, months_label=months)
 
-        # 2. Assign na'at: e.g. "שבץ נע"ת לאורי לוי: אחראי הדרכה"
+        # 4. Assign na'at: e.g. "שבץ נע"ת לאורי לוי: אחראי הדרכה"
         if any(w in text for w in ["שבץ נע\"ת", "הקצה נע\"ת", "עדכן נע\"ת"]):
             assign_match = re.search(r"(?:שבץ|הקצה|עדכן)\s*נע\"ת\s*(?:ל|עבור)?\s*([^:]+):\s*(.+)$", text)
             if assign_match:
@@ -25,7 +41,7 @@ class HRAgent:
                 duty_name = assign_match.group(2).strip()
                 return self.assign_naat_to_soldier(soldier_name, duty_name)
 
-        # 3. Query na'at history: e.g. "היסטוריית נע"ת אורי לוי"
+        # 5. Query na'at history: e.g. "היסטוריית נע"ת אורי לוי"
         if "היסטוריית נע\"ת" in text or "היסטוריה של נע\"ת" in text or "נע\"תים של" in text:
             name_match = re.search(r"(?:היסטוריית נע\"ת|נע\"תים של)\s*(?:ל|של)?\s*([^\?\.\n]+)", text)
             if name_match:
@@ -33,14 +49,14 @@ class HRAgent:
                 soldier_name = re.sub(r"[\?\.\!]", "", soldier_name).strip()
                 return self.get_soldier_naat_history(soldier_name)
 
-        # 4. Query soldiers by team
+        # 6. Query soldiers by team
         team_match = re.search(r"(?:בצוות|צוות)\s*([^\?\.\n]+)", text)
         if team_match and ("חיילים" in text or "מי בצוות" in text or "רשימת" in text):
             team_name = team_match.group(1).strip()
             team_name = re.sub(r"[\?\.\!]", "", team_name).strip()
             return self.list_soldiers_by_team(team_name)
 
-        # 5. Query individual soldier profile
+        # 7. Query individual soldier profile
         soldier_match = re.search(r"(?:פרופיל(?:\s+חייל)?|מי זה|פרטי חייל)\s*([^\?\.\n]+)", text)
         if soldier_match:
             soldier_name = soldier_match.group(1).strip()
@@ -48,6 +64,61 @@ class HRAgent:
             return self.get_soldier_profile(soldier_name)
 
         return "👥 סוכן כוח אדם ופיתוח: לשירותך בבירור פרטי חיילים, חלוקת צוותים, נע\"תים וחוזי חניכה."
+
+    def update_mentorship_contract(self, soldier_name: str, goals_text: str) -> str:
+        soldier = self.repo.get_soldier_by_name(soldier_name)
+        if not soldier or soldier.id is None:
+            return f"⚠️ לא נמצא חייל בשם '{soldier_name}' במערכת."
+
+        personal_goal = "טרם הוגדר"
+        professional_goal = "טרם הוגדר"
+
+        p_match = re.search(r"יעד\s*אישי:\s*([^,;]+)", goals_text)
+        if p_match:
+            personal_goal = p_match.group(1).strip()
+
+        prof_match = re.search(r"יעד\s*מקצועי:\s*([^,;]+)", goals_text)
+        if prof_match:
+            professional_goal = prof_match.group(1).strip()
+
+        # Fallback if no explicit prefix
+        if personal_goal == "טרם הוגדר" and professional_goal == "טרם הוגדר" and "," in goals_text:
+            parts = goals_text.split(",", 1)
+            personal_goal = parts[0].strip()
+            professional_goal = parts[1].strip()
+
+        self.repo.set_mentorship_goals(
+            soldier_id=soldier.id,
+            personal_goal=personal_goal,
+            professional_goal=professional_goal,
+            year=2026,
+        )
+
+        return (
+            f"📜 *עודכן חוזה חניכה עבור {soldier.full_name}*:\n"
+            f"• *יעד אישי*: {personal_goal}\n"
+            f"• *יעד מקצועי*: {professional_goal}"
+        )
+
+    def get_mentorship_contract_report(self, soldier_name: str) -> str:
+        soldier = self.repo.get_soldier_by_name(soldier_name)
+        if not soldier or soldier.id is None:
+            return f"⚠️ לא נמצא חייל בשם '{soldier_name}' במערכת."
+
+        contract = self.repo.get_mentorship_contract(soldier.id, year=2026)
+        if not contract:
+            return f"📜 טרם נפתח חוזה חניכה לשנת 2026 עבור {soldier.full_name}."
+
+        last_date = contract.get("last_one_on_one_date") or "טרם בוצעה שיחה"
+        next_due = contract.get("next_one_on_one_due") or "טרם נקבע יעד"
+
+        return (
+            f"📜 *חוזה חניכה עבור {soldier.full_name}* (שנת 2026):\n"
+            f"• *יעד אישי*: {contract['personal_goal']}\n"
+            f"• *יעד מקצועי*: {contract['professional_goal']}\n"
+            f"• *שיחת 1-על-1 אחרונה*: {last_date}\n"
+            f"• *יעד לשיחה הבאה*: {next_due}"
+        )
 
     def get_upcoming_releases_report(self, days_ahead: int, months_label: int) -> str:
         soldiers = self.repo.get_upcoming_releases(days_ahead=days_ahead)

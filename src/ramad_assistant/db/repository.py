@@ -1,4 +1,4 @@
-"""Repository layer for tasks, teams, soldiers, and naat history."""
+"""Repository layer for tasks, teams, soldiers, naat history, and mentorship contracts."""
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
@@ -57,7 +57,25 @@ class TaskRepository:
                 )
             """)
 
-            # 4. Personal Tasks table
+            # 4. Mentorship Contracts table
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS mentorship_contracts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    soldier_id INTEGER NOT NULL,
+                    contract_year INTEGER NOT NULL,
+                    personal_goal TEXT NOT NULL,
+                    professional_goal TEXT NOT NULL,
+                    last_one_on_one_date TEXT,
+                    next_one_on_one_due TEXT,
+                    notes TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE (soldier_id, contract_year),
+                    FOREIGN KEY (soldier_id) REFERENCES soldiers(id) ON DELETE CASCADE
+                )
+            """)
+
+            # 5. Personal Tasks table
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS personal_tasks (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -278,6 +296,92 @@ class TaskRepository:
                 "SELECT * FROM naat_history WHERE soldier_id = ? ORDER BY start_date ASC",
                 (soldier_id,),
             ).fetchall()
+            return [dict(r) for r in rows]
+
+    # --- Mentorship Contracts Methods ---
+    def set_mentorship_goals(
+        self,
+        soldier_id: int,
+        personal_goal: str,
+        professional_goal: str,
+        year: int = 2026,
+        notes: Optional[str] = None,
+    ) -> dict[str, Any]:
+        now = datetime.now(timezone.utc).isoformat()
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO mentorship_contracts (
+                    soldier_id, contract_year, personal_goal, professional_goal,
+                    notes, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(soldier_id, contract_year) DO UPDATE SET
+                    personal_goal = excluded.personal_goal,
+                    professional_goal = excluded.professional_goal,
+                    notes = coalesce(excluded.notes, mentorship_contracts.notes),
+                    updated_at = excluded.updated_at
+                """,
+                (soldier_id, year, personal_goal, professional_goal, notes, now, now),
+            )
+            conn.commit()
+        contract = self.get_mentorship_contract(soldier_id, year)
+        assert contract is not None
+        return contract
+
+    def get_mentorship_contract(self, soldier_id: int, year: int = 2026) -> Optional[dict[str, Any]]:
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM mentorship_contracts WHERE soldier_id = ? AND contract_year = ?",
+                (soldier_id, year),
+            ).fetchone()
+            if not row:
+                return None
+            return dict(row)
+
+    def record_one_on_one_meeting(
+        self, soldier_id: int, meeting_date: Optional[str] = None, notes: Optional[str] = None
+    ) -> Optional[dict[str, Any]]:
+        now = datetime.now(timezone.utc)
+        date_str = meeting_date or now.strftime("%Y-%m-%d")
+        next_due_str = (datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc) + timedelta(days=30)).strftime("%Y-%m-%d")
+        year = int(date_str[:4])
+        iso_now = now.isoformat()
+
+        with self._get_connection() as conn:
+            # Update contract if exists, otherwise create basic contract entry
+            conn.execute(
+                """
+                INSERT INTO mentorship_contracts (
+                    soldier_id, contract_year, personal_goal, professional_goal,
+                    last_one_on_one_date, next_one_on_one_due, notes, created_at, updated_at
+                ) VALUES (?, ?, 'טרם הוגדר', 'טרם הוגדר', ?, ?, ?, ?, ?)
+                ON CONFLICT(soldier_id, contract_year) DO UPDATE SET
+                    last_one_on_one_date = excluded.last_one_on_one_date,
+                    next_one_on_one_due = excluded.next_one_on_one_due,
+                    notes = case when excluded.notes is not null then excluded.notes else mentorship_contracts.notes end,
+                    updated_at = excluded.updated_at
+                """,
+                (soldier_id, year, date_str, next_due_str, notes, iso_now, iso_now),
+            )
+            conn.commit()
+        return self.get_mentorship_contract(soldier_id, year)
+
+    def get_overdue_mentorships(self, max_days: int = 30) -> list[dict[str, Any]]:
+        now = datetime.now(timezone.utc)
+        threshold_date = (now - timedelta(days=max_days)).strftime("%Y-%m-%d")
+        year = now.year
+
+        query = """
+            SELECT s.id, s.full_name, s.service_type, t.name as team_name,
+                   mc.last_one_on_one_date, mc.next_one_on_one_due
+            FROM soldiers s
+            LEFT JOIN teams t ON s.team_id = t.id
+            LEFT JOIN mentorship_contracts mc ON s.id = mc.soldier_id AND mc.contract_year = ?
+            WHERE mc.last_one_on_one_date IS NULL OR mc.last_one_on_one_date < ?
+            ORDER BY s.full_name ASC
+        """
+        with self._get_connection() as conn:
+            rows = conn.execute(query, (year, threshold_date)).fetchall()
             return [dict(r) for r in rows]
 
     # --- Personal Tasks Methods ---

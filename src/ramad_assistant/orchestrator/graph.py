@@ -39,7 +39,7 @@ class Orchestrator:
                 return {"current_agent": "task_agent"}
 
             # HR & People routing
-            if any(k in text for k in ["חייל", "חיילים", "צוות", "פרופיל", "משתחרר", "נע\"ת"]):
+            if any(k in text for k in ["חייל", "חיילים", "צוות", "פרופיל", "משתחרר", "נע\"ת", "חוזה חניכה", "חניכה"]):
                 return {"current_agent": "hr_agent"}
 
             # General task routing

@@ -31,6 +31,23 @@ class Soldier(BaseModel):
     )
 
 
+class MentorshipContract(BaseModel):
+    id: Optional[int] = None
+    soldier_id: int
+    contract_year: int = 2026
+    personal_goal: str
+    professional_goal: str
+    last_one_on_one_date: Optional[str] = None
+    next_one_on_one_due: Optional[str] = None
+    notes: Optional[str] = None
+    created_at: str = Field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
+    updated_at: str = Field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
+
+
 class PersonalTask(BaseModel):
     id: Optional[int] = None
     title: str
