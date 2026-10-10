@@ -189,8 +189,8 @@ class Orchestrator:
 
     def _is_operational_command(self, text: str) -> bool:
         """Determines if text is an explicit operational command rather than debrief continuation."""
-        task_keywords = ["תפתח משימה", "צור משימה", "משימה חדשה", "תג\"ב", "תגבים", "תדחה", "דחה", "סיימתי משימה", "בטל משימה"]
-        hr_keywords = ["חייל", "חיילים", "צוות", "פרופיל", "משתחרר", "נע\"ת", "חוזה חניכה", "1-על-1", "שיחה אישית"]
+        task_keywords = ["תפתח משימה", "צור משימה", "משימה חדשה", "תג\"ב", "תגבים", "תדחה", "דחה משימה", "סיימתי משימה", "בטל משימה"]
+        hr_keywords = ["מי בצוות", "רשימת צוות", "פרופיל חייל", "מי משתחרר", "שבץ נע\"ת", "הקצה נע\"ת", "היסטוריית נע\"ת", "עדכן חוזה חניכה", "הצג חוזה חניכה", "ביצעתי שיחת 1-על-1", "קיימתי שיחת 1-על-1"]
         query_keywords = ["משימות פתוחות", "משימות להיום", "הצג משימות", "רשימת משימות"]
         return any(k in text for k in task_keywords + hr_keywords + query_keywords)
 
