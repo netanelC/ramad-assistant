@@ -82,7 +82,15 @@ class TaskAgent:
                 sections.append(f"• [#{t.id}] *{t.title}* ({t.tagab_at})")
             sections.append("")
 
-        if not overdue and not today_tasks and not critical_48h:
+        overdue_mentorships = self.task_repo.get_overdue_mentorships(max_days=30)
+        if overdue_mentorships:
+            sections.append(f"👥 *חיילים בחריגת שיחת 1-על-1 (> 30 יום)* ({len(overdue_mentorships)}):")
+            for m in overdue_mentorships:
+                last_d = m.get("last_one_on_one_date") or "טרם בוצעה"
+                sections.append(f"• *{m['full_name']}* (שיחה אחרונה: {last_d})")
+            sections.append("")
+
+        if not overdue and not today_tasks and not critical_48h and not overdue_mentorships:
             sections.append("✨ אין תג\"בים דחופים או חורגים להיום. יום פורה ומוצלח!")
 
         return "\n".join(sections).strip()
