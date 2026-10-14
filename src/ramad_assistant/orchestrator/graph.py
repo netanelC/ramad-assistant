@@ -202,7 +202,7 @@ class Orchestrator:
                 f"User message: \"{text}\"\n\n"
                 "Return ONLY the category name (hr_agent, task_agent, mentor_agent) with no other text."
             )
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={self.gemini_api_key}"
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key={self.gemini_api_key}"
             payload = {
                 "contents": [{"parts": [{"text": prompt}]}],
                 "generationConfig": {"temperature": 0.0, "maxOutputTokens": 20},

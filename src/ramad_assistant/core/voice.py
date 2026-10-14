@@ -24,7 +24,7 @@ class GeminiVoiceProcessor(IVoiceProcessor):
             logger.warning("No GEMINI_API_KEY configured; returning empty transcript.")
             return ""
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={self.api_key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key={self.api_key}"
         encoded_audio = base64.b64encode(audio_bytes).decode("utf-8")
 
         payload = {
