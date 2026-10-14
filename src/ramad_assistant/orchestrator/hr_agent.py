@@ -106,6 +106,16 @@ class HRAgent:
                     },
                 },
                 {
+                    "name": "list_teams",
+                    "description": "הצגת רשימת כל הצוותים במדור, כולל שמות הצוותים, ראשי הצוותים (רש\"צים) ומספר החיילים בכל צוות",
+                    "parameters": {"type": "OBJECT", "properties": {}},
+                },
+                {
+                    "name": "get_section_summary",
+                    "description": "תמונת מצב מקיפה של כוח האדם במדור: כמות צוותים, סד\"כ חיילים כולל, התפלגות חובה/קבע ודרגות/קצונה",
+                    "parameters": {"type": "OBJECT", "properties": {}},
+                },
+                {
                     "name": "get_mentorship_contract",
                     "description": "הצגת חוזה החניכה השנתי של חייל (יעדים, מועד שיחת 1-על-1 אחרונה ותאריך יעד הבא)",
                     "parameters": {
@@ -119,7 +129,9 @@ class HRAgent:
             ]
 
             async def tool_executor(name: str, args: dict[str, Any]) -> Any:
-                if name == "get_soldier_profile":
+                if name == "list_teams" or name == "get_section_summary":
+                    return self.repo.get_section_summary()
+                elif name == "get_soldier_profile":
                     soldier = self.repo.get_soldier_by_name(args["soldier_name"])
                     if not soldier:
                         return {"error": f"חייל בשם '{args['soldier_name']}' לא נמצא במערכת"}
@@ -137,11 +149,25 @@ class HRAgent:
                         "commander_notes": soldier.commander_notes,
                     }
                 elif name == "list_soldiers_by_team":
-                    team = self.repo.get_team_by_name(args["team_name"])
+                    tname = (args.get("team_name") or "").strip()
+                    if not tname or tname in ["כל הצוותים", "הצוותים שלי", "צוותים"]:
+                        return self.repo.get_section_summary()
+                    team = self.repo.get_team_by_name(tname)
                     if not team:
-                        return {"error": f"צוות '{args['team_name']}' לא נמצא"}
+                        all_t = self.repo.list_teams()
+                        matched_t = [t for t in all_t if tname in t.name or t.name in tname]
+                        if matched_t:
+                            team = matched_t[0]
+                    if not team:
+                        available_names = [t.name for t in self.repo.list_teams()]
+                        return {"error": f"צוות '{tname}' לא נמצא. הצוותים הקיימים במדור הם: {available_names}"}
                     soldiers = self.repo.list_soldiers(team_id=team.id)
-                    return {"team": team.name, "soldiers": [s.full_name for s in soldiers]}
+                    return {
+                        "team": team.name,
+                        "team_lead": team.team_lead_name or "טרם הוגדר רש\"צ רשמי",
+                        "soldiers": [s.full_name for s in soldiers],
+                        "count": len(soldiers),
+                    }
                 elif name == "record_one_on_one":
                     soldier = self.repo.get_soldier_by_name(args["soldier_name"])
                     if not soldier:
@@ -243,7 +269,16 @@ class HRAgent:
                 soldier_name = re.sub(r"[\?\.\!]", "", soldier_name).strip()
                 return self.get_soldier_naat_history(soldier_name)
 
-        # 6. Query soldiers by team
+        # 6. Query all teams / section overview
+        if any(w in text for w in ["מה הצוותים", "כמה צוותים", "רשימת צוותים", "הצוותים שלי", "כל הצוותים"]):
+            summary = self.repo.get_section_summary()
+            lines = [f"👥 *תמונת מצב צוותים במדור* (סה\"כ {summary['total_teams']} צוותים, {summary['total_soldiers']} חיילים):"]
+            for tm in summary["teams"]:
+                lead_str = f" | רש\"צ: {tm['team_lead']}" if tm['team_lead'] != "טרם הוגדר רש\"צ רשמי" else ""
+                lines.append(f"• *צוות {tm['team_name']}* ({tm['soldiers_count']} חיילים){lead_str}")
+            return "\n".join(lines)
+
+        # 7. Query soldiers by specific team
         team_match = re.search(r"(?:בצוות|צוות)\s*([^\?\.\n]+)", text)
         if team_match and ("חיילים" in text or "מי בצוות" in text or "רשימת" in text):
             team_name = team_match.group(1).strip()

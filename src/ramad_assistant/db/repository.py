@@ -159,6 +159,56 @@ class TaskRepository:
                 created_at=row["created_at"],
             )
 
+    def list_teams(self) -> list[Team]:
+        with self._get_connection() as conn:
+            rows = conn.execute("SELECT * FROM teams ORDER BY name ASC").fetchall()
+            return [
+                Team(
+                    id=row["id"],
+                    name=row["name"],
+                    team_lead_name=row["team_lead_name"],
+                    description=row["description"],
+                    created_at=row["created_at"],
+                )
+                for row in rows
+            ]
+
+    def get_section_summary(self) -> dict[str, Any]:
+        teams = self.list_teams()
+        soldiers = self.list_soldiers()
+        total_soldiers = len(soldiers)
+
+        team_stats = []
+        for t in teams:
+            t_soldiers = [s for s in soldiers if s.team_id == t.id]
+            team_stats.append({
+                "team_id": t.id,
+                "team_name": t.name,
+                "team_lead": t.team_lead_name or "טרם הוגדר רש\"צ רשמי",
+                "soldiers_count": len(t_soldiers),
+                "soldiers": [s.full_name for s in t_soldiers],
+            })
+
+        # Breakdown by service type
+        service_types: dict[str, int] = {}
+        for s in soldiers:
+            st = s.service_type or "אחר"
+            service_types[st] = service_types.get(st, 0) + 1
+
+        # Breakdown by rank
+        ranks: dict[str, int] = {}
+        for s in soldiers:
+            r = s.rank or "ללא דרגה"
+            ranks[r] = ranks.get(r, 0) + 1
+
+        return {
+            "total_teams": len(teams),
+            "total_soldiers": total_soldiers,
+            "teams": team_stats,
+            "service_types": service_types,
+            "ranks": ranks,
+        }
+
     # --- Soldiers Methods ---
     def create_soldier(self, soldier: Soldier) -> Soldier:
         now = datetime.now(timezone.utc).isoformat()
