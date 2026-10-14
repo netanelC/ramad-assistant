@@ -19,6 +19,11 @@ class Soldier(BaseModel):
     full_name: str
     team_id: Optional[int] = None
     service_type: str = "MANDATORY"  # MANDATORY, CAREER, RESERVE, CONSULTANT
+    rank: Optional[str] = None
+    tash_status: Optional[str] = None
+    academic_status: Optional[str] = None
+    excellence_status: Optional[str] = None
+    excellence_notes: Optional[str] = None
     release_date: Optional[str] = None  # YYYY-MM-DD
     current_naat: Optional[str] = None
     education: Optional[str] = None

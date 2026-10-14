@@ -194,15 +194,30 @@ class HRAgent:
             if team:
                 team_name = team.name
 
+        rank_str = f" [{soldier.rank}]" if soldier.rank else ""
         lines = [
-            f"👤 *כרטיס חייל: {soldier.full_name}*",
+            f"👤 *כרטיס חייל: {soldier.full_name}*{rank_str}",
             f"• *צוות*: {team_name}",
             f"• *סוג שירות*: {soldier.service_type}",
-            f"• *תאריך שחרור*: {soldier.release_date or 'לא מוגדר'}",
-            f"• *נע\"ת נוכחי*: {soldier.current_naat or 'ללא'}",
         ]
-        if soldier.education:
-            lines.append(f"• *השכלה*: {soldier.education}")
+        if soldier.tash_status:
+            lines.append(f"• *התאמות ת\"ש / מעמד מיוחד*: {soldier.tash_status}")
+        if soldier.release_date:
+            lines.append(f"• *תאריך שחרור/סיום*: {soldier.release_date}")
+        if soldier.current_naat:
+            lines.append(f"• *נע\"ת נוכחי*: {soldier.current_naat}")
+        if soldier.academic_status or soldier.education:
+            acad_parts = []
+            if soldier.academic_status:
+                acad_parts.append(soldier.academic_status)
+            if soldier.education:
+                acad_parts.append(soldier.education)
+            lines.append(f"• *השכלה ואקדמיה*: {' - '.join(acad_parts)}")
+        if soldier.excellence_status and soldier.excellence_status != "לא מועמד":
+            exc_str = soldier.excellence_status
+            if soldier.excellence_notes:
+                exc_str += f" ({soldier.excellence_notes})"
+            lines.append(f"• *הוקרה והצטיינות*: {exc_str}")
         if soldier.commander_notes:
             lines.append(f"• *הערות מפקד*: {soldier.commander_notes}")
 
@@ -223,7 +238,9 @@ class HRAgent:
 
         lines = [f"👥 *חיילי {team.name}* ({len(soldiers)}):"]
         for s in soldiers:
+            rank_info = f"{s.rank} " if s.rank else ""
             naat_info = f" (נע\"ת: {s.current_naat})" if s.current_naat else ""
-            lines.append(f"• *{s.full_name}* [{s.service_type}]{naat_info}")
+            tash_info = f" [ת\"ש: {s.tash_status}]" if s.tash_status else ""
+            lines.append(f"• *{rank_info}{s.full_name}* [{s.service_type}]{naat_info}{tash_info}")
 
         return "\n".join(lines)

@@ -34,6 +34,11 @@ class TaskRepository:
                     full_name TEXT NOT NULL,
                     team_id INTEGER,
                     service_type TEXT NOT NULL,
+                    rank TEXT,
+                    tash_status TEXT,
+                    academic_status TEXT,
+                    excellence_status TEXT,
+                    excellence_notes TEXT,
                     release_date TEXT,
                     current_naat TEXT,
                     education TEXT,
@@ -43,6 +48,12 @@ class TaskRepository:
                     FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE SET NULL
                 )
             """)
+
+            # Run safe migrations for existing SQLite databases
+            soldier_columns = [col[1] for col in conn.execute("PRAGMA table_info(soldiers)").fetchall()]
+            for new_col in ["rank", "tash_status", "academic_status", "excellence_status", "excellence_notes"]:
+                if new_col not in soldier_columns:
+                    conn.execute(f"ALTER TABLE soldiers ADD COLUMN {new_col} TEXT")
 
             # 3. Naat History table
             conn.execute("""
@@ -155,14 +166,20 @@ class TaskRepository:
             cursor = conn.execute(
                 """
                 INSERT INTO soldiers (
-                    full_name, team_id, service_type, release_date,
-                    current_naat, education, commander_notes, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    full_name, team_id, service_type, rank, tash_status,
+                    academic_status, excellence_status, excellence_notes,
+                    release_date, current_naat, education, commander_notes, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     soldier.full_name,
                     soldier.team_id,
                     soldier.service_type,
+                    soldier.rank,
+                    soldier.tash_status,
+                    soldier.academic_status,
+                    soldier.excellence_status,
+                    soldier.excellence_notes,
                     soldier.release_date,
                     soldier.current_naat,
                     soldier.education,
@@ -187,23 +204,32 @@ class TaskRepository:
             conn.commit()
             return soldier
 
+    def _row_to_soldier(self, row: Any) -> Soldier:
+        keys = row.keys()
+        return Soldier(
+            id=row["id"],
+            full_name=row["full_name"],
+            team_id=row["team_id"],
+            service_type=row["service_type"],
+            rank=row["rank"] if "rank" in keys else None,
+            tash_status=row["tash_status"] if "tash_status" in keys else None,
+            academic_status=row["academic_status"] if "academic_status" in keys else None,
+            excellence_status=row["excellence_status"] if "excellence_status" in keys else None,
+            excellence_notes=row["excellence_notes"] if "excellence_notes" in keys else None,
+            release_date=row["release_date"],
+            current_naat=row["current_naat"],
+            education=row["education"],
+            commander_notes=row["commander_notes"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
     def get_soldier(self, soldier_id: int) -> Optional[Soldier]:
         with self._get_connection() as conn:
             row = conn.execute("SELECT * FROM soldiers WHERE id = ?", (soldier_id,)).fetchone()
             if not row:
                 return None
-            return Soldier(
-                id=row["id"],
-                full_name=row["full_name"],
-                team_id=row["team_id"],
-                service_type=row["service_type"],
-                release_date=row["release_date"],
-                current_naat=row["current_naat"],
-                education=row["education"],
-                commander_notes=row["commander_notes"],
-                created_at=row["created_at"],
-                updated_at=row["updated_at"],
-            )
+            return self._row_to_soldier(row)
 
     def get_soldier_by_name(self, full_name: str) -> Optional[Soldier]:
         with self._get_connection() as conn:
@@ -213,18 +239,7 @@ class TaskRepository:
             ).fetchone()
             if not row:
                 return None
-            return Soldier(
-                id=row["id"],
-                full_name=row["full_name"],
-                team_id=row["team_id"],
-                service_type=row["service_type"],
-                release_date=row["release_date"],
-                current_naat=row["current_naat"],
-                education=row["education"],
-                commander_notes=row["commander_notes"],
-                created_at=row["created_at"],
-                updated_at=row["updated_at"],
-            )
+            return self._row_to_soldier(row)
 
     def list_soldiers(self, team_id: Optional[int] = None) -> list[Soldier]:
         query = "SELECT * FROM soldiers"
@@ -236,21 +251,7 @@ class TaskRepository:
 
         with self._get_connection() as conn:
             rows = conn.execute(query, params).fetchall()
-            return [
-                Soldier(
-                    id=row["id"],
-                    full_name=row["full_name"],
-                    team_id=row["team_id"],
-                    service_type=row["service_type"],
-                    release_date=row["release_date"],
-                    current_naat=row["current_naat"],
-                    education=row["education"],
-                    commander_notes=row["commander_notes"],
-                    created_at=row["created_at"],
-                    updated_at=row["updated_at"],
-                )
-                for row in rows
-            ]
+            return [self._row_to_soldier(row) for row in rows]
 
     def get_upcoming_releases(self, days_ahead: int = 90) -> list[Soldier]:
         now = datetime.now(timezone.utc)

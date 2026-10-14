@@ -11,6 +11,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Copy configuration and project files
 COPY pyproject.toml README.md doctrine.md ./
+COPY *.csv ./
+COPY data/ ./data/
 COPY src/ ./src/
 
 # Install application

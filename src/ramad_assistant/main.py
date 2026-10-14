@@ -31,6 +31,21 @@ def init_and_seed() -> None:
         except Exception as e:
             print(f"⚠️ Notice: Doctrine seeding encountered: {e}")
 
+    # Seed soldiers if CSV file is present and soldiers table is empty
+    for csv_candidate in ["ניהול - אנשים_ופיתוח.csv", "data/soldiers_template.csv"]:
+        csv_file = Path(csv_candidate)
+        if csv_file.exists():
+            existing = repo.list_soldiers()
+            if not existing:
+                print(f"👥 Seeding soldiers from {csv_candidate}...")
+                try:
+                    from ramad_assistant.db.seed_soldiers import seed_soldiers_from_csv
+                    c = seed_soldiers_from_csv(str(csv_file), repo)
+                    print(f"✅ Successfully seeded {c} soldiers.")
+                except Exception as e:
+                    print(f"⚠️ Notice: Soldiers seeding encountered: {e}")
+            break
+
 
 def main() -> None:
     init_and_seed()
