@@ -65,11 +65,17 @@ class HRAgent:
             return self.list_soldiers_by_team(team_name)
 
         # 7. Query individual soldier profile
-        soldier_match = re.search(r"(?:פרופיל(?:\s+חייל)?|מי זה|פרטי חייל)\s*([^\?\.\n]+)", text)
+        soldier_match = re.search(r"(?:פרופיל(?:\s+חייל)?|מי זה|מי זאת|פרטי חייל|ספר לי על)\s*([^\?\.\n]+)", text)
         if soldier_match:
             soldier_name = soldier_match.group(1).strip()
             soldier_name = re.sub(r"[\?\.\!]", "", soldier_name).strip()
             return self.get_soldier_profile(soldier_name)
+
+        # Check if the text directly matches or contains a soldier's name from DB
+        clean_text = re.sub(r"[\?\.\!\:\,]", "", text).strip()
+        matched_soldier = self.repo.get_soldier_by_name(clean_text)
+        if matched_soldier:
+            return self.get_soldier_profile(matched_soldier.full_name)
 
         return "👥 סוכן כוח אדם ופיתוח: לשירותך בבירור פרטי חיילים, חלוקת צוותים, נע\"תים וחוזי חניכה."
 

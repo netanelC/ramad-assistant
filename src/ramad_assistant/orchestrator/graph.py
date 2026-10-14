@@ -1,5 +1,7 @@
-"""LangGraph Orchestrator with Supervisor routing and persistence."""
+import os
+import re
 from typing import Any, Optional, TypedDict
+import httpx
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import InMemorySaver
 
@@ -31,6 +33,7 @@ class Orchestrator:
         self.hr_agent = HRAgent(repo=task_repo)
         self.mentor_agent = CommandMentorAgent(vector_store=self.vector_store)
         self.checkpointer = checkpointer or InMemorySaver()
+        self.gemini_api_key = os.getenv("GEMINI_API_KEY", "")
         self.active_reflection_thread: Optional[str] = None
         self.reflection_step: int = 0
         self.reflection_data: dict[str, Any] = {}
@@ -39,26 +42,11 @@ class Orchestrator:
     def _build_graph(self) -> Any:
         builder = StateGraph(OrchestratorState)
 
-        # 1. Supervisor / Router Node
-        def supervisor_node(state: OrchestratorState) -> dict[str, Any]:
+        # 1. Supervisor / Router Node (Semantic Classification with Fallback)
+        async def supervisor_node(state: OrchestratorState) -> dict[str, Any]:
             text = state["input_text"]
-            # Explicit task / tagab actions take precedence
-            if any(k in text for k in ["תפתח משימה", "צור משימה", "משימה חדשה", "תג\"ב", "תגבים", "תדחה", "דחה", "סיימתי משימה", "בטל משימה"]):
-                return {"current_agent": "task_agent"}
-
-            # HR & People routing
-            if any(k in text for k in ["חייל", "חיילים", "צוות", "פרופיל", "משתחרר", "נע\"ת", "חוזה חניכה", "חניכה", "1-על-1", "שיחה אישית"]):
-                return {"current_agent": "hr_agent"}
-
-            # Philosophical / Command Mentor / Reflection routing
-            if any(k in text for k in ["מראה פיקודית", "דילמה", "מתלבט", "עומס", "שחיקה", "טובע", "מתוסכל", "תפיסה פיקודית", "עקרונות"]):
-                return {"current_agent": "mentor_agent"}
-
-            # General task routing
-            if any(k in text for k in ["משימה", "משימות", "תזכורת", "task", "tagab", "postpone"]):
-                return {"current_agent": "task_agent"}
-
-            return {"current_agent": "echo_agent"}
+            agent = await self._classify_intent(text)
+            return {"current_agent": agent}
 
         # 2. Task Agent Node
         def task_node(state: OrchestratorState) -> dict[str, Any]:
@@ -129,7 +117,7 @@ class Orchestrator:
     async def process_message(
         self, user_id: str, text: str, thread_id: Optional[str] = None
     ) -> str:
-        # Dynamic ADR-0002 thread routing
+        # Dynamic ADR-0002 thread routing: an operational command must be an explicit task or HR operation
         is_operational = self._is_operational_command(text)
 
         if not thread_id:
@@ -186,6 +174,82 @@ class Orchestrator:
         }
         result = await self.graph.ainvoke(initial_state, config=config)
         return result.get("response_text", "")
+
+    async def _classify_intent(self, text: str) -> str:
+        """
+        Classifies incoming message into one of:
+        - hr_agent: Questions or actions regarding soldiers, profiles, teams, 1-on-1s, na'at, releases, mentorship.
+        - task_agent: Task creation, postponement, status updates, tagab queries.
+        - mentor_agent: Philosophical dilemmas, doctrine consultations, personal leadership burnout/calendar reflection.
+        - echo_agent: General greeting, chit-chat or uncategorized input.
+        """
+        if self.gemini_api_key:
+            prompt = (
+                "You are an intent classifier for a military tech-intelligence section head (רמ\"ד) assistant.\n"
+                "Classify the following user message into exactly ONE category:\n"
+                "- hr_agent: Inquiries, questions or commands regarding soldiers (חיילים, כ\"א), soldier profiles (מי זה, מי זאת, פרטים על חייל), "
+                "teams (מי בצוות), 1-on-1 meetings (שיחות 1-על-1), secondary duties (נע\"ת), upcoming releases (שחרור), or mentorship contracts (חוזה חניכה).\n"
+                "- task_agent: Creating tasks (תפתח משימה), updating deadlines/tagab (תג\"ב), postponing tasks (תדחה), completing/cancelling tasks (סיימתי/בטל), or querying task lists (משימות פתוחות).\n"
+                "- mentor_agent: Leadership dilemmas (דילמה פיקודית), calendar overload/burnout (עומס, שחיקה), Socratic reflection, or command doctrine consultation (מראה פיקודית).\n"
+                "- echo_agent: General greetings or uncategorized messages.\n\n"
+                f"User message: \"{text}\"\n\n"
+                "Return ONLY the category name (hr_agent, task_agent, mentor_agent, echo_agent) with no other text."
+            )
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={self.gemini_api_key}"
+            payload = {
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {"temperature": 0.0, "maxOutputTokens": 20},
+            }
+            try:
+                async with httpx.AsyncClient(timeout=3.5) as client:
+                    resp = await client.post(url, json=payload)
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        candidates = data.get("candidates") or []
+                        if candidates:
+                            raw_reply = candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "").strip()
+                            clean_agent = raw_reply.lower().replace("`", "").strip()
+                            if clean_agent in ["hr_agent", "task_agent", "mentor_agent", "echo_agent"]:
+                                return clean_agent
+            except Exception:
+                pass  # Fallback to local rule-based routing
+
+        return self._fallback_classify_intent(text)
+
+    def _fallback_classify_intent(self, text: str) -> str:
+        """Deterministic keyword and database entity matching fallback."""
+        clean = re.sub(r"[\?\.\!\:\,]", "", text).strip()
+
+        # 1. Check if the message mentions a soldier's name in the DB
+        soldier = self.task_repo.get_soldier_by_name(clean)
+        if soldier:
+            return "hr_agent"
+
+        # Check if any word combination matches a soldier
+        words = clean.split()
+        if len(words) >= 2:
+            for i in range(len(words) - 1):
+                candidate = f"{words[i]} {words[i+1]}"
+                if self.task_repo.get_soldier_by_name(candidate):
+                    return "hr_agent"
+
+        # 2. Explicit task / tagab actions
+        if any(k in text for k in ["תפתח משימה", "צור משימה", "משימה חדשה", "תג\"ב", "תגבים", "תדחה", "דחה", "סיימתי משימה", "בטל משימה"]):
+            return "task_agent"
+
+        # 3. HR & People keywords
+        if any(k in text for k in ["חייל", "חיילים", "צוות", "פרופיל", "משתחרר", "משתחררים", "שחרור", "נע\"ת", "חוזה חניכה", "חניכה", "1-על-1", "שיחה אישית", "מי זה", "מי זאת", "פרטי חייל", "ספר לי על"]):
+            return "hr_agent"
+
+        # 4. Command Mentor keywords
+        if any(k in text for k in ["מראה פיקודית", "דילמה", "מתלבט", "עומס", "שחיקה", "טובע", "מתוסכל", "תפיסה פיקודית", "עקרונות"]):
+            return "mentor_agent"
+
+        # 5. General task queries
+        if any(k in text for k in ["משימה", "משימות", "תזכורת", "task", "tagab", "postpone"]):
+            return "task_agent"
+
+        return "echo_agent"
 
     def _is_operational_command(self, text: str) -> bool:
         """Determines if text is an explicit operational command rather than debrief continuation."""
