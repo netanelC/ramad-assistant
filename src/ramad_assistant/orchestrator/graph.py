@@ -208,7 +208,7 @@ class Orchestrator:
                 "generationConfig": {"temperature": 0.0, "maxOutputTokens": 20},
             }
             try:
-                async with httpx.AsyncClient(timeout=3.5) as client:
+                async with httpx.AsyncClient(timeout=8.0) as client:
                     resp = await client.post(url, json=payload)
                     if resp.status_code == 200:
                         data = resp.json()
@@ -269,7 +269,14 @@ class Orchestrator:
             "תדחה", "דחה משימה", "סיימתי משימה", "בטל משימה",
             "תמחק", "מחק", "למחוק", "סיימתי", "השלמתי", "בטל"
         ]
-        hr_keywords = ["מי בצוות", "רשימת צוות", "פרופיל חייל", "מי משתחרר", "שבץ נע\"ת", "הקצה נע\"ת", "היסטוריית נע\"ת", "עדכן חוזה חניכה", "הצג חוזה חניכה", "ביצעתי שיחת 1-על-1", "קיימתי שיחת 1-על-1"]
-        query_keywords = ["משימות פתוחות", "משימות להיום", "הצג משימות", "רשימת משימות"]
+        hr_keywords = [
+            "מי בצוות", "רשימת צוות", "פרופיל חייל", "מי משתחרר", "שבץ נע\"ת",
+            "הקצה נע\"ת", "היסטוריית נע\"ת", "עדכן חוזה חניכה", "הצג חוזה חניכה",
+            "ביצעתי שיחת 1-על-1", "קיימתי שיחת 1-על-1", "כמה צוותים", "מה הצוותים", "צוותים שלי"
+        ]
+        query_keywords = [
+            "משימות פתוחות", "משימות להיום", "הצג משימות", "רשימת משימות",
+            "מה המשימות", "המשימות שלי", "מה המשימה"
+        ]
         return any(k in text for k in task_keywords + hr_keywords + query_keywords)
 

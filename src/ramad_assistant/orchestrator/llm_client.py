@@ -7,7 +7,7 @@ logger = logging.getLogger(__name__)
 
 
 class LLMClient:
-    def __init__(self, api_key: str, model: str = "gemini-3.8-flash", timeout: float = 12.0):
+    def __init__(self, api_key: str, model: str = "gemini-3.8-flash", timeout: float = 20.0):
         self.api_key = api_key
         self.model = model
         self.timeout = timeout
@@ -56,8 +56,9 @@ class LLMClient:
         payload["contents"] = contents
 
         try:
+            tool_executions = 0
             async with httpx.AsyncClient(timeout=self.timeout) as client:
-                for _ in range(max_tool_steps):
+                for step in range(max_tool_steps):
                     resp = await client.post(self.endpoint, json=payload)
                     if resp.status_code != 200:
                         logger.error(f"Gemini API error ({resp.status_code}): {resp.text}")
@@ -74,9 +75,12 @@ class LLMClient:
                     if not parts:
                         return "סליחה, תוכן התשובה ריק. אנא נסה שוב."
 
-                    # Check for tool call in parts
-                    first_part = parts[0]
-                    function_call = first_part.get("functionCall")
+                    # Check for tool call across all parts
+                    function_call = None
+                    for part in parts:
+                        if isinstance(part, dict) and part.get("functionCall"):
+                            function_call = part["functionCall"]
+                            break
 
                     if function_call and tool_executor:
                         fn_name = function_call.get("name", "")
@@ -91,6 +95,8 @@ class LLMClient:
                             logger.error(f"Tool execution failed for {fn_name}: {e}")
                             fn_result = {"error": f"Tool execution failed: {str(e)}"}
 
+                        tool_executions += 1
+
                         # Append model functionCall parts to conversation (including thoughtSignature)
                         contents.append({"role": "model", "parts": parts})
                         # Append function response to conversation with role 'user'
@@ -104,18 +110,41 @@ class LLMClient:
                             }],
                         })
                         payload["contents"] = contents
+
+                        # If tool has executed, remove tools on subsequent steps to prevent infinite looping
+                        if tool_executions >= 2 or step >= max_tool_steps - 2:
+                            payload.pop("tools", None)
+
                         continue
 
-                    # If no function call, collect the text from parts
+                    # If no function call, collect the non-thought text from parts
                     reply_text = ""
                     for p in parts:
-                        if "text" in p and p.get("text"):
+                        if isinstance(p, dict) and not p.get("thought") and p.get("text"):
                             reply_text += p["text"]
 
                     if reply_text.strip():
                         return reply_text.strip()
 
-                return "הפעולה בוצעה, אך השיחה ארכה מספר שלבים רב מהרגיל."
+                # Fallback synthesis if no final text was output after tools
+                payload.pop("tools", None)
+                payload["contents"].append({
+                    "role": "user",
+                    "parts": [{"text": "אנא נסח כעת תשובה ישירה, בהירה וטבעית בעברית למשתמש על סמך כל המידע והנתונים שעלו בשיחה."}],
+                })
+                resp = await client.post(self.endpoint, json=payload)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    candidates = data.get("candidates") or []
+                    if candidates:
+                        candidate_parts = candidates[0].get("content", {}).get("parts") or []
+                        synth_text = "".join(
+                            p.get("text", "") for p in candidate_parts if isinstance(p, dict) and not p.get("thought")
+                        ).strip()
+                        if synth_text:
+                            return synth_text
+
+                return "סליחה, אירעה תקלה זמנית בניסוח התשובה. אנא נסה לשאול שוב."
 
         except httpx.TimeoutException:
             logger.warning("Gemini API call timed out.")
