@@ -189,7 +189,7 @@ class Orchestrator:
                 "Classify the following user message into exactly ONE category:\n"
                 "- hr_agent: Inquiries, questions or commands regarding soldiers (חיילים, כ\"א), soldier profiles (מי זה, מי זאת, פרטים על חייל), "
                 "teams (מי בצוות), 1-on-1 meetings (שיחות 1-על-1), secondary duties (נע\"ת), upcoming releases (שחרור), or mentorship contracts (חוזה חניכה).\n"
-                "- task_agent: Creating tasks (תפתח משימה), updating deadlines/tagab (תג\"ב), postponing tasks (תדחה), completing/cancelling tasks (סיימתי/בטל), or querying task lists (משימות פתוחות).\n"
+                "- task_agent: Creating tasks (תפתח משימה), updating deadlines/tagab (תג\"ב), postponing tasks (תדחה), completing/cancelling tasks (סיימתי, סיימתי את כל המשימות, בטל), deleting tasks (תמחק, מחק משימה, תמחק את כל המשימות), or querying task lists (מה המשימות, משימות פתוחות).\n"
                 "- mentor_agent: Leadership dilemmas (דילמה פיקודית), calendar overload/burnout (עומס, שחיקה), Socratic reflection, or command doctrine consultation (מראה פיקודית).\n"
                 "- echo_agent: General greetings or uncategorized messages.\n\n"
                 f"User message: \"{text}\"\n\n"
@@ -233,8 +233,12 @@ class Orchestrator:
                 if self.task_repo.get_soldier_by_name(candidate):
                     return "hr_agent"
 
-        # 2. Explicit task / tagab actions
-        if any(k in text for k in ["תפתח משימה", "צור משימה", "משימה חדשה", "תג\"ב", "תגבים", "תדחה", "דחה", "סיימתי משימה", "בטל משימה"]):
+        # 2. Explicit task / tagab actions (create, delete, complete, postpone)
+        if any(k in text for k in [
+            "תפתח משימה", "צור משימה", "משימה חדשה", "תג\"ב", "תגבים",
+            "תדחה", "דחה", "סיימתי משימה", "בטל משימה", "תמחק", "מחק", "למחוק",
+            "סיימתי", "השלמתי"
+        ]):
             return "task_agent"
 
         # 3. HR & People keywords
@@ -253,7 +257,11 @@ class Orchestrator:
 
     def _is_operational_command(self, text: str) -> bool:
         """Determines if text is an explicit operational command rather than debrief continuation."""
-        task_keywords = ["תפתח משימה", "צור משימה", "משימה חדשה", "תג\"ב", "תגבים", "תדחה", "דחה משימה", "סיימתי משימה", "בטל משימה"]
+        task_keywords = [
+            "תפתח משימה", "צור משימה", "משימה חדשה", "תג\"ב", "תגבים",
+            "תדחה", "דחה משימה", "סיימתי משימה", "בטל משימה",
+            "תמחק", "מחק", "למחוק", "סיימתי", "השלמתי", "בטל"
+        ]
         hr_keywords = ["מי בצוות", "רשימת צוות", "פרופיל חייל", "מי משתחרר", "שבץ נע\"ת", "הקצה נע\"ת", "היסטוריית נע\"ת", "עדכן חוזה חניכה", "הצג חוזה חניכה", "ביצעתי שיחת 1-על-1", "קיימתי שיחת 1-על-1"]
         query_keywords = ["משימות פתוחות", "משימות להיום", "הצג משימות", "רשימת משימות"]
         return any(k in text for k in task_keywords + hr_keywords + query_keywords)

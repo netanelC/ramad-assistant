@@ -104,3 +104,164 @@ async def test_mark_task_as_done_via_chat(tmp_path):
     assert len(spy_adapter.sent_messages) == 1
     _, reply_text = spy_adapter.sent_messages[0]
     assert "בוצעה" in reply_text
+
+
+@pytest.mark.asyncio
+async def test_complete_all_tasks_via_chat(tmp_path):
+    db_path = str(tmp_path / "test_tasks.db")
+    task_repo = TaskRepository(db_url=f"sqlite:///{db_path}")
+    task_repo.init_db()
+
+    task_repo.create_task(PersonalTask(title="משימה א", tagab_at="2026-10-15 12:00", priority="HIGH", status="OPEN"))
+    task_repo.create_task(PersonalTask(title="משימה ב", tagab_at="2026-10-15 14:00", priority="LOW", status="OPEN"))
+
+    spy_adapter = SpyTelegramAdapter()
+    app = create_app(
+        messenger_adapter=spy_adapter,
+        allowed_user_ids=["999888"],
+        task_repo=task_repo,
+    )
+
+    payload = {
+        "update_id": 10005,
+        "message": {
+            "message_id": 53,
+            "from": {"id": 999888, "first_name": "Ramad"},
+            "chat": {"id": 999888, "type": "private"},
+            "date": 1728560000,
+            "text": "סיימתי את כל המשימות"
+        }
+    }
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post("/webhook/telegram", json=payload)
+
+    assert response.status_code == 200
+    open_tasks = task_repo.list_tasks(status="OPEN")
+    assert len(open_tasks) == 0
+
+    done_tasks = task_repo.list_tasks(status="DONE")
+    assert len(done_tasks) == 2
+
+    assert len(spy_adapter.sent_messages) == 1
+    _, reply_text = spy_adapter.sent_messages[0]
+    assert "סומנו כבוצעו" in reply_text
+    assert "2" in reply_text
+
+
+@pytest.mark.asyncio
+async def test_delete_all_tasks_via_chat(tmp_path):
+    db_path = str(tmp_path / "test_tasks.db")
+    task_repo = TaskRepository(db_url=f"sqlite:///{db_path}")
+    task_repo.init_db()
+
+    task_repo.create_task(PersonalTask(title="משימה א", tagab_at="2026-10-15 12:00", priority="HIGH", status="OPEN"))
+    task_repo.create_task(PersonalTask(title="משימה ב", tagab_at="2026-10-15 14:00", priority="LOW", status="OPEN"))
+
+    spy_adapter = SpyTelegramAdapter()
+    app = create_app(
+        messenger_adapter=spy_adapter,
+        allowed_user_ids=["999888"],
+        task_repo=task_repo,
+    )
+
+    payload = {
+        "update_id": 10006,
+        "message": {
+            "message_id": 54,
+            "from": {"id": 999888, "first_name": "Ramad"},
+            "chat": {"id": 999888, "type": "private"},
+            "date": 1728560000,
+            "text": "תמחק את כל המשימות"
+        }
+    }
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post("/webhook/telegram", json=payload)
+
+    assert response.status_code == 200
+    all_tasks = task_repo.list_tasks()
+    assert len(all_tasks) == 0
+
+    assert len(spy_adapter.sent_messages) == 1
+    _, reply_text = spy_adapter.sent_messages[0]
+    assert "נמחקו לצמיתות" in reply_text
+    assert "2" in reply_text
+
+
+@pytest.mark.asyncio
+async def test_delete_single_task_by_title_query(tmp_path):
+    db_path = str(tmp_path / "test_tasks.db")
+    task_repo = TaskRepository(db_url=f"sqlite:///{db_path}")
+    task_repo.init_db()
+
+    t1 = task_repo.create_task(PersonalTask(title="שיחה דחופה עם טל שבו", tagab_at="2026-10-15 12:00", priority="HIGH", status="OPEN"))
+    t2 = task_repo.create_task(PersonalTask(title="מצגת לרע\"ן", tagab_at="2026-10-15 14:00", priority="LOW", status="OPEN"))
+
+    spy_adapter = SpyTelegramAdapter()
+    app = create_app(
+        messenger_adapter=spy_adapter,
+        allowed_user_ids=["999888"],
+        task_repo=task_repo,
+    )
+
+    payload = {
+        "update_id": 10007,
+        "message": {
+            "message_id": 55,
+            "from": {"id": 999888, "first_name": "Ramad"},
+            "chat": {"id": 999888, "type": "private"},
+            "date": 1728560000,
+            "text": "תמחק את המשימה של השיחה עם טל"
+        }
+    }
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post("/webhook/telegram", json=payload)
+
+    assert response.status_code == 200
+    assert task_repo.get_task(t1.id) is None
+    assert task_repo.get_task(t2.id) is not None
+
+    assert len(spy_adapter.sent_messages) == 1
+    _, reply_text = spy_adapter.sent_messages[0]
+    assert "נמחקה לצמיתות" in reply_text
+    assert "שיחה דחופה עם טל שבו" in reply_text
+
+
+@pytest.mark.asyncio
+async def test_delete_non_existent_task_does_not_create_task(tmp_path):
+    db_path = str(tmp_path / "test_tasks.db")
+    task_repo = TaskRepository(db_url=f"sqlite:///{db_path}")
+    task_repo.init_db()
+
+    spy_adapter = SpyTelegramAdapter()
+    app = create_app(
+        messenger_adapter=spy_adapter,
+        allowed_user_ids=["999888"],
+        task_repo=task_repo,
+    )
+
+    payload = {
+        "update_id": 10008,
+        "message": {
+            "message_id": 56,
+            "from": {"id": 999888, "first_name": "Ramad"},
+            "chat": {"id": 999888, "type": "private"},
+            "date": 1728560000,
+            "text": "תמחק את המשימה של שחרור דני"
+        }
+    }
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post("/webhook/telegram", json=payload)
+
+    assert response.status_code == 200
+    # Crucial check: verify NO task was created in DB!
+    all_tasks = task_repo.list_tasks()
+    assert len(all_tasks) == 0
+
+    assert len(spy_adapter.sent_messages) == 1
+    _, reply_text = spy_adapter.sent_messages[0]
+    assert "לא נמצאה משימה פתוחה" in reply_text
+

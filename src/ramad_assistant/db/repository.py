@@ -492,6 +492,85 @@ class TaskRepository:
             conn.commit()
         return self.get_task(task_id)
 
+    def delete_task(self, task_id: int) -> bool:
+        with self._get_connection() as conn:
+            cursor = conn.execute("DELETE FROM personal_tasks WHERE id = ?", (task_id,))
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def delete_all_tasks(self, status: Optional[str] = "OPEN") -> int:
+        query = "DELETE FROM personal_tasks"
+        params: list[str] = []
+        if status:
+            query += " WHERE status = ?"
+            params.append(status)
+        with self._get_connection() as conn:
+            cursor = conn.execute(query, params)
+            conn.commit()
+            return cursor.rowcount
+
+    def complete_all_tasks(self) -> int:
+        now = datetime.now(timezone.utc).isoformat()
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                "UPDATE personal_tasks SET status = 'DONE', updated_at = ? WHERE status = 'OPEN'",
+                (now,),
+            )
+            conn.commit()
+            return cursor.rowcount
+
+    def find_tasks_by_query(
+        self, query: str, status: Optional[str] = "OPEN"
+    ) -> list[PersonalTask]:
+        tasks = self.list_tasks(status=status)
+        clean_q = query.lower().strip()
+        if not clean_q:
+            return []
+
+        # 1. Exact substring match
+        matched = [t for t in tasks if clean_q in t.title.lower() or (t.details and clean_q in t.details.lower())]
+        if matched:
+            return matched
+
+        # 2. Token overlap with Hebrew normalization
+        stopwords = {"את", "של", "על", "עם", "כל", "זה", "זו", "רק", "גם", "או", "אם", "עד", "כי", "לגבי", "בנושא"}
+        raw_tokens = [w for w in clean_q.split() if w not in stopwords and len(w) >= 2]
+        if not raw_tokens:
+            return []
+
+        # Expand tokens: e.g. "השיחה" -> ["השיחה", "שיחה"]
+        expanded_tokens: set[str] = set()
+        for tok in raw_tokens:
+            expanded_tokens.add(tok)
+            if tok.startswith("ה") and len(tok) >= 3:
+                expanded_tokens.add(tok[1:])
+
+        scored_tasks: list[tuple[int, PersonalTask]] = []
+        for t in tasks:
+            text_target = f"{t.title} {t.details or ''}".lower()
+            target_words = set(text_target.split())
+            # Also expand target words without leading 'ה'
+            expanded_target_words = set(target_words)
+            for tw in target_words:
+                if tw.startswith("ה") and len(tw) >= 3:
+                    expanded_target_words.add(tw[1:])
+
+            overlap = sum(
+                1 for tok in expanded_tokens
+                if tok in expanded_target_words or any(tok in tw for tw in target_words)
+            )
+            if overlap > 0:
+                scored_tasks.append((overlap, t))
+
+        if not scored_tasks:
+            return []
+
+        # Sort by overlap score descending
+        scored_tasks.sort(key=lambda x: x[0], reverse=True)
+        max_score = scored_tasks[0][0]
+        # Return tasks that achieved max score
+        return [t for score, t in scored_tasks if score == max_score]
+
     def postpone_task(
         self, task_id: int, new_tagab_at: str, reason: str
     ) -> Optional[PersonalTask]:
