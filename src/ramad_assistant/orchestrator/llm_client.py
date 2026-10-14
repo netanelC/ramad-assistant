@@ -91,11 +91,11 @@ class LLMClient:
                             logger.error(f"Tool execution failed for {fn_name}: {e}")
                             fn_result = {"error": f"Tool execution failed: {str(e)}"}
 
-                        # Append model functionCall part to conversation
-                        contents.append({"role": "model", "parts": [first_part]})
-                        # Append function response to conversation
+                        # Append model functionCall parts to conversation (including thoughtSignature)
+                        contents.append({"role": "model", "parts": parts})
+                        # Append function response to conversation with role 'user'
                         contents.append({
-                            "role": "function",
+                            "role": "user",
                             "parts": [{
                                 "functionResponse": {
                                     "name": fn_name,
@@ -106,9 +106,14 @@ class LLMClient:
                         payload["contents"] = contents
                         continue
 
-                    # If no function call, we have the conversational text
-                    reply_text = first_part.get("text", "").strip()
-                    return reply_text
+                    # If no function call, collect the text from parts
+                    reply_text = ""
+                    for p in parts:
+                        if "text" in p and p.get("text"):
+                            reply_text += p["text"]
+
+                    if reply_text.strip():
+                        return reply_text.strip()
 
                 return "הפעולה בוצעה, אך השיחה ארכה מספר שלבים רב מהרגיל."
 
