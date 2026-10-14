@@ -3,6 +3,7 @@ import os
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
+from ramad_assistant.core.datetime_utils import get_israel_now
 from ramad_assistant.db.models import PersonalTask
 from ramad_assistant.db.repository import TaskRepository
 from ramad_assistant.orchestrator.llm_client import LLMClient
@@ -435,7 +436,7 @@ class TaskAgent:
         )
 
     def _resolve_date(self, text: str) -> datetime:
-        now = datetime.now(timezone.utc)
+        now = get_israel_now()
         if "מחר בערב" in text:
             return (now + timedelta(days=1)).replace(hour=18, minute=0, second=0)
         elif "מחר בצהריים" in text or "מחר 12:00" in text:

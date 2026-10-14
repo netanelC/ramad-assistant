@@ -2,6 +2,7 @@
 import logging
 from typing import Any, Callable, Optional
 import httpx
+from ramad_assistant.core.datetime_utils import get_current_datetime_context
 
 logger = logging.getLogger(__name__)
 
@@ -31,10 +32,14 @@ class LLMClient:
         if not self.api_key:
             return "⚠️ מפתח ה-API אינו מוגדר. אנא הגדר GEMINI_API_KEY."
 
+        # Ensure real-time temporal grounding in system instruction
+        dt_ctx = get_current_datetime_context()
+        effective_system_instruction = f"{system_instruction.strip()}\n\n{dt_ctx}"
+
         # Format system instruction
         payload: dict[str, Any] = {
             "systemInstruction": {
-                "parts": [{"text": system_instruction}]
+                "parts": [{"text": effective_system_instruction}]
             },
             "generationConfig": {
                 "temperature": 0.4,
