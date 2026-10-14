@@ -1,16 +1,219 @@
-"""Task & Tagab Agent logic."""
+"""Task & Tagab Agent logic with Conversational LLM Tool Calling."""
+import os
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Any, Optional
 from ramad_assistant.db.models import PersonalTask
 from ramad_assistant.db.repository import TaskRepository
+from ramad_assistant.orchestrator.llm_client import LLMClient
+
+TASK_SYSTEM_INSTRUCTION = """אתה 'סוכן משימות ותג"בים' (Task Agent) של הרמ"ד (ראש מדור טכנולוגי-מודיעיני).
+תפקידך לסייע לרמ"ד לנהל ביד רמה את המשימות האישיות שלו, התג"בים (תאריכי גמר ביצוע), וסדרי העדיפויות המבצעיים.
+
+כללי הברזל של הרמ"ד במשימות:
+1. עמידה בתג"ב היא קודש.
+2. חובת רישום סיבה: לא ניתן לדחות תג"ב ללא ציון סיבה ברורה. אם המשתמש מבקש לדחות משימה ולא ציין סיבה, בקש ממנו בנימוס ובאופן שיחתי לציין את סיבת הדחייה.
+3. סדר עדיפויות מובהק (LOW, MEDIUM, HIGH, CRITICAL). ברירת המחדל היא MEDIUM.
+
+הנחיות לשיחה:
+- ענה תמיד בעברית טבעית, חדה, עניינית ויעילה (כמו בשיחה מול ChatGPT או Gemini), ללא תבניות רובוטיות.
+- השתמש בכלים (Functions) לביצוע פעולות על המשימות (יצירה, מחיקה, סיום, דחייה, רשימה).
+- אשר תמיד את הפעולה שבוצעה באופן שיחתי, ברור ומדויק.
+"""
 
 
 class TaskAgent:
-    def __init__(self, task_repo: TaskRepository):
+    def __init__(self, task_repo: TaskRepository, api_key: Optional[str] = None):
         self.task_repo = task_repo
+        self.api_key = api_key or os.getenv("GEMINI_API_KEY", "")
+        self.llm = LLMClient(api_key=self.api_key) if self.api_key else None
 
-    def handle_message(self, text: str) -> str:
+    async def handle_message(self, text: str, history: Optional[list[dict[str, Any]]] = None) -> str:
+        if self.llm:
+            tools = [
+                {
+                    "name": "create_task",
+                    "description": "פתיחת משימה חדשה לרמ\"ד עם תג\"ב (תאריך יעד) ורמת עדיפות",
+                    "parameters": {
+                        "type": "OBJECT",
+                        "properties": {
+                            "title": {"type": "STRING", "description": "כותרת או תיאור המשימה"},
+                            "tagab_description": {"type": "STRING", "description": "מועד התג\"ב (למשל: מחר בצהריים, היום בערב, 2026-10-15)"},
+                            "priority": {"type": "STRING", "description": "עדיפות: LOW, MEDIUM, HIGH, CRITICAL"}
+                        },
+                        "required": ["title"],
+                    },
+                },
+                {
+                    "name": "complete_task",
+                    "description": "סימון משימה מסוימת כבוצעה (DONE) לפי מזהה #ID או לפי שם/תיאור",
+                    "parameters": {
+                        "type": "OBJECT",
+                        "properties": {
+                            "task_id": {"type": "INTEGER", "description": "מזהה המשימה (אם ידוע)"},
+                            "title_query": {"type": "STRING", "description": "מילות חיפוש בכותרת המשימה"}
+                        },
+                    },
+                },
+                {
+                    "name": "complete_all_tasks",
+                    "description": "סימון כל המשימות הפתוחות כבוצעו (DONE)",
+                    "parameters": {"type": "OBJECT", "properties": {}},
+                },
+                {
+                    "name": "delete_task",
+                    "description": "מחיקה פיזית (Hard delete) של משימה מסוימת מהמערכת לפי מזהה #ID או שם",
+                    "parameters": {
+                        "type": "OBJECT",
+                        "properties": {
+                            "task_id": {"type": "INTEGER", "description": "מזהה המשימה (אם ידוע)"},
+                            "title_query": {"type": "STRING", "description": "מילות חיפוש בכותרת המשימה"}
+                        },
+                    },
+                },
+                {
+                    "name": "delete_all_tasks",
+                    "description": "מחיקה פיזית מוחלטת של כל המשימות הפתוחות מהמערכת",
+                    "parameters": {"type": "OBJECT", "properties": {}},
+                },
+                {
+                    "name": "postpone_task",
+                    "description": "דחיית תג\"ב של משימה למועד חדש (חובה לציין סיבה!)",
+                    "parameters": {
+                        "type": "OBJECT",
+                        "properties": {
+                            "reason": {"type": "STRING", "description": "סיבת הדחייה (חובה)"},
+                            "task_id": {"type": "INTEGER", "description": "מזהה המשימה"},
+                            "title_query": {"type": "STRING", "description": "מילות חיפוש בכותרת המשימה"},
+                            "new_date_description": {"type": "STRING", "description": "המועד החדש (למשל: מחר בערב, שבוע הבא)"}
+                        },
+                        "required": ["reason"],
+                    },
+                },
+                {
+                    "name": "list_tasks",
+                    "description": "הצגת רשימת המשימות הפתוחות (או בסטטוס אחר)",
+                    "parameters": {
+                        "type": "OBJECT",
+                        "properties": {
+                            "status": {"type": "STRING", "description": "OPEN, DONE, CANCELLED או ריק לכל הפתוחות"}
+                        },
+                    },
+                },
+                {
+                    "name": "get_daily_briefing",
+                    "description": "קבלת דוח בוקר יומי לרמ\"ד (תג\"בים בחריגה, תג\"בים להיום, תג\"בים קריטיים וחריגות 1-על-1)",
+                    "parameters": {"type": "OBJECT", "properties": {}},
+                },
+            ]
+
+            async def tool_executor(name: str, args: dict[str, Any]) -> Any:
+                if name == "create_task":
+                    tagab_text = args.get("tagab_description", "מחר")
+                    tagab_dt = self._resolve_date(tagab_text)
+                    priority = (args.get("priority") or "MEDIUM").upper()
+                    if priority not in ["LOW", "MEDIUM", "HIGH", "CRITICAL"]:
+                        priority = "MEDIUM"
+                    task = PersonalTask(
+                        title=args["title"],
+                        tagab_at=tagab_dt.strftime("%Y-%m-%d %H:%M"),
+                        priority=priority,
+                        status="OPEN",
+                    )
+                    saved = self.task_repo.create_task(task)
+                    return {"status": "created", "task": {"id": saved.id, "title": saved.title, "tagab_at": saved.tagab_at, "priority": saved.priority}}
+
+                elif name == "complete_task":
+                    task_id = args.get("task_id")
+                    query = args.get("title_query")
+                    if task_id:
+                        updated = self.task_repo.update_task_status(task_id, "DONE")
+                        if updated:
+                            return {"status": "completed", "task": {"id": updated.id, "title": updated.title}}
+                        return {"error": f"משימה #{task_id} לא נמצאה"}
+                    if query:
+                        matches = self.task_repo.find_tasks_by_query(query, status="OPEN")
+                        if len(matches) == 1:
+                            t = self.task_repo.update_task_status(matches[0].id, "DONE")
+                            return {"status": "completed", "task": {"id": t.id, "title": t.title}}
+                        elif len(matches) > 1:
+                            return {"multiple_matches": [{"id": m.id, "title": m.title} for m in matches]}
+                        return {"error": f"לא נמצאה משימה פתוחה התואמת ל-'{query}'"}
+                    return {"error": "נא לציין מספר משימה או מילות חיפוש"}
+
+                elif name == "complete_all_tasks":
+                    count = self.task_repo.complete_all_tasks()
+                    return {"status": "all_completed", "count": count}
+
+                elif name == "delete_task":
+                    task_id = args.get("task_id")
+                    query = args.get("title_query")
+                    if task_id:
+                        t = self.task_repo.get_task(task_id)
+                        if not t:
+                            return {"error": f"משימה #{task_id} לא נמצאה"}
+                        self.task_repo.delete_task(task_id)
+                        return {"status": "deleted", "task": {"id": t.id, "title": t.title}}
+                    if query:
+                        matches = self.task_repo.find_tasks_by_query(query, status="OPEN")
+                        if len(matches) == 1:
+                            t = matches[0]
+                            self.task_repo.delete_task(t.id)
+                            return {"status": "deleted", "task": {"id": t.id, "title": t.title}}
+                        elif len(matches) > 1:
+                            return {"multiple_matches": [{"id": m.id, "title": m.title} for m in matches]}
+                        return {"error": f"לא נמצאה משימה פתוחה התואמת ל-'{query}'"}
+                    return {"error": "נא לציין מספר משימה או מילות חיפוש"}
+
+                elif name == "delete_all_tasks":
+                    count = self.task_repo.delete_all_tasks(status="OPEN")
+                    return {"status": "all_deleted", "count": count}
+
+                elif name == "postpone_task":
+                    reason = args.get("reason", "").strip()
+                    if not reason:
+                        return {"error": "חובת רישום סיבה לדחיית תג\"ב"}
+                    new_date_text = args.get("new_date_description", "מחר")
+                    new_dt = self._resolve_date(new_date_text)
+                    new_dt_str = new_dt.strftime("%Y-%m-%d %H:%M")
+
+                    target_task: Optional[PersonalTask] = None
+                    if args.get("task_id"):
+                        target_task = self.task_repo.get_task(args["task_id"])
+                    elif args.get("title_query"):
+                        matches = self.task_repo.find_tasks_by_query(args["title_query"], status="OPEN")
+                        if len(matches) == 1:
+                            target_task = matches[0]
+                        elif len(matches) > 1:
+                            return {"multiple_matches": [{"id": m.id, "title": m.title} for m in matches]}
+
+                    if not target_task:
+                        return {"error": "משימה לא נמצאה"}
+
+                    updated = self.task_repo.postpone_task(target_task.id, new_dt_str, reason)
+                    return {"status": "postponed", "task": {"id": updated.id, "title": updated.title, "new_tagab": updated.tagab_at, "postpone_count": updated.postpone_count}}
+
+                elif name == "list_tasks":
+                    st = args.get("status") or "OPEN"
+                    tasks = self.task_repo.list_tasks(status=st)
+                    return {"tasks": [{"id": t.id, "title": t.title, "tagab_at": t.tagab_at, "priority": t.priority, "status": t.status} for t in tasks]}
+
+                elif name == "get_daily_briefing":
+                    return {"briefing": self.build_daily_briefing()}
+
+                return {"error": f"Unknown tool: {name}"}
+
+            return await self.llm.chat(
+                system_instruction=TASK_SYSTEM_INSTRUCTION,
+                user_message=text,
+                history=history,
+                tools=tools,
+                tool_executor=tool_executor,
+            )
+
+        return self._fallback_handle_message(text)
+
+    def _fallback_handle_message(self, text: str) -> str:
         # 1. Bulk complete commands ("סיימתי את כל המשימות", "השלמתי את כל המשימות")
         if re.search(r"(?:סיימתי|השלמתי|סגור|בוצעו)\s+את\s+כל\s+המשימות", text) or any(
             phrase in text for phrase in ["סיימתי את כל המשימות", "השלמתי את כל המשימות", "סגור את כל המשימות"]

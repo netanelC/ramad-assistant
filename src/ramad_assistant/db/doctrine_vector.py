@@ -12,6 +12,10 @@ class DoctrineVectorStore:
     def __init__(self, repo: TaskRepository, api_key: str = ""):
         self.repo = repo
         self.api_key = api_key
+        try:
+            self.init_table()
+        except Exception:
+            pass
 
     def init_table(self) -> None:
         with self.repo._get_connection() as conn:
@@ -47,15 +51,21 @@ class DoctrineVectorStore:
             return cursor.lastrowid
 
     def list_chunks(self) -> list[dict[str, Any]]:
-        with self.repo._get_connection() as conn:
-            rows = conn.execute("SELECT id, section_title, content, metadata FROM command_doctrine").fetchall()
-            return [dict(r) for r in rows]
+        try:
+            with self.repo._get_connection() as conn:
+                rows = conn.execute("SELECT id, section_title, content, metadata FROM command_doctrine").fetchall()
+                return [dict(r) for r in rows]
+        except Exception:
+            return []
 
     def similarity_search(self, query_vector: list[float], top_k: int = 3) -> list[dict[str, Any]]:
-        with self.repo._get_connection() as conn:
-            rows = conn.execute(
-                "SELECT id, section_title, content, embedding, metadata FROM command_doctrine WHERE embedding IS NOT NULL"
-            ).fetchall()
+        try:
+            with self.repo._get_connection() as conn:
+                rows = conn.execute(
+                    "SELECT id, section_title, content, embedding, metadata FROM command_doctrine WHERE embedding IS NOT NULL"
+                ).fetchall()
+        except Exception:
+            return []
 
         results = []
         for r in rows:

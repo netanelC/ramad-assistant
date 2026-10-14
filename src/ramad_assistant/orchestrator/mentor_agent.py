@@ -1,16 +1,77 @@
-"""Command Mentor Agent ('מראה פיקודית')."""
+"""Command Mentor Agent ('מראה פיקודית') and System Architect Advisor."""
 import os
-from typing import Optional
+from typing import Any, Optional
 from ramad_assistant.db.doctrine_vector import DoctrineVectorStore
+from ramad_assistant.orchestrator.llm_client import LLMClient
+
+MENTOR_SYSTEM_INSTRUCTION = """אתה 'המנטור הפיקודי' (Command Mentor) והיועץ הראשי לרמ"ד (ראש מדור טכנולוגי-מודיעיני).
+תפקידך לשמש "מראה פיקודית", יועץ סוקרטי, ומלווה אישי, וכן המומחה הראשי לארכיטקטורה וליכולות של מערכת העוזר (Ramad Assistant).
+
+עקרונות הליבה הפיקודיים שלך (מהתפיסה הפיקודית):
+1. שגרות ויומן: "מה שלא ביומן לא קורה!" שריון חלון תכנון שבועיים קדימה, דיונים של 30 דקות כברירת מחדל, וימי שלישי 16:00 יציאה הביתה למשפחה ולילדות.
+2. אחריות מקיפה: "האויב של האחריות הוא אחריות מקיפה. קודם מוודאים שהקיים עובד הרמטית לפני שמוסיפים פיצ'רים חדשים. להגיד 'מה לא עושים'."
+3. אנשים וחניכה: "הרמ"ד הוא המערכת. הפקודים רוצים שיראו אותם, שיילחמו בשבילם ושייתנו להם גב פיקודי מלא. שיחות 1-על-1 אישיות, דיאלוג ישיר ודוגרי."
+4. איכות וחוב טכנולוגי: "אין חוב טכנולוגי שקוף! כל טלאי זמני חייב להיכנס מיד ל-Jira עם תאריך יעד ברור לתיקון ארכיטקטוני."
+5. דוגמא אישית: קור רוח, אופטימיות, ומועילות מבצעית הקודמת ליעילות טכנולוגית.
+
+ידע על ארכיטקטורת מערכת העוזר לרמ"ד:
+המערכת היא מערכת Multi-Agent מודרנית הרצה בענן Google Cloud Run עם מסד נתונים SQLite/Postgres, ומחוברת לטלגרם (טקסט וקול באמצעות Gemini).
+המערכת מורכבת מ-3 סוכנים מתמחים:
+1. סוכן משימות ותג"בים (Task Agent): אחראי על ניהול משימות אישיות, מעקב תג"בים, דחיית תג"ב עם חובת רישום סיבה, סימון משימות שבוצעו, מחיקת משימות ודוחות בוקר יומיים.
+2. סוכן כוח אדם ופיתוח (HR Agent): אחראי על תיקי חיילים, חלוקת צוותים, מעקב שיחות 1-על-1, נע"תים (נושאי אחריות תחומיים), שחרורים קרובים, וחוזי חניכה שנתיים.
+3. סוכן מנטור פיקודי ושיחה כללית (Mentor Agent - אתה): מנהל שיחות פתוחות, דילמות מנהיגותיות, מראה פיקודית סוקרטית, שגרת תחקור עצמי דו-שבועי, ויודע להסביר על כל יכולות המערכת והארכיטקטורה שלה.
+
+הנחיות לתשובה:
+- ענה תמיד בעברית טבעית, חכמה, אמפתית ובוגרת כמו יועץ ושותף לדרך, ללא תבניות רובוטיות.
+- אם מדובר בדילמה פיקודית או שאלת מנהיגות, השתמש בכלי 'search_doctrine' לחיפוש עקרונות רלוונטיים מתורת הפיקוד שלך.
+- אם נשאלת על המערכת, תפקידי הסוכנים, או איך היא עובדת, הסבר בצורה בהירה ונעימה על הארכיטקטורה והיכולות.
+- אם מדובר בברכה או סמול-טוק, פתח שיחה חמה ועניינית.
+"""
 
 
 class CommandMentorAgent:
     def __init__(self, vector_store: DoctrineVectorStore, api_key: Optional[str] = None):
         self.vector_store = vector_store
         self.api_key = api_key or os.getenv("GEMINI_API_KEY", "")
+        self.llm = LLMClient(api_key=self.api_key) if self.api_key else None
 
-    async def consult(self, query: str) -> str:
-        """Ad-hoc Socratic consultation based on doctrine principles."""
+    async def consult(self, query: str, history: Optional[list[dict[str, Any]]] = None) -> str:
+        """Ad-hoc Socratic consultation or general conversation based on doctrine and system knowledge."""
+        if self.llm:
+            tools = [
+                {
+                    "name": "search_doctrine",
+                    "description": "חיפוש עקרונות ותובנות מתורת הפיקוד האישית של הרמ\"ד (מראה פיקודית)",
+                    "parameters": {
+                        "type": "OBJECT",
+                        "properties": {
+                            "query": {
+                                "type": "STRING",
+                                "description": "ביטוי או נושא לחיפוש בתורת הפיקוד (למשל: עומס ביומן, חוב טכנולוגי, חניכה)",
+                            }
+                        },
+                        "required": ["query"],
+                    },
+                }
+            ]
+
+            async def tool_executor(name: str, args: dict[str, Any]) -> Any:
+                if name == "search_doctrine":
+                    q = args.get("query", query)
+                    q_emb = await self.vector_store.generate_embedding(q)
+                    chunks = self.vector_store.similarity_search(q_emb, top_k=2)
+                    return {"results": chunks}
+                return {"error": f"Unknown tool: {name}"}
+
+            return await self.llm.chat(
+                system_instruction=MENTOR_SYSTEM_INSTRUCTION,
+                user_message=query,
+                history=history,
+                tools=tools,
+                tool_executor=tool_executor,
+            )
+
+        # Fallback for offline / testing without API key
         query_emb = await self.vector_store.generate_embedding(query)
         top_chunks = self.vector_store.similarity_search(query_emb, top_k=2)
 
@@ -20,7 +81,6 @@ class CommandMentorAgent:
             relevant_section = top_chunks[0]["section_title"]
             relevant_content = top_chunks[0]["content"]
 
-        # Craft Socratic response based on doctrine context
         return self._build_socratic_reflection(query, relevant_section, relevant_content)
 
     def _build_socratic_reflection(self, query: str, section_title: str, content: str) -> str:

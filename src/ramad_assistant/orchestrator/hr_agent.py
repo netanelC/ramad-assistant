@@ -1,13 +1,199 @@
-"""HR & People Agent logic."""
+"""HR & People Agent logic with Conversational LLM Tool Calling."""
+import os
 import re
+from typing import Any, Optional
 from ramad_assistant.db.repository import TaskRepository
+from ramad_assistant.orchestrator.llm_client import LLMClient
+
+HR_SYSTEM_INSTRUCTION = """אתה 'סוכן כוח אדם ופיתוח אנשים' (HR Agent) של מדור טכנולוגי-מודיעיני.
+תפקידך לסייע לרמ"ד (ראש המדור) בניהול ההון האנושי: פרופילי חיילים, צוותים, שיחות 1-על-1, נע"תים (נושאי אחריות תחומיים), שחרורים קרובים וחוזי חניכה.
+
+הנחיות לשיחה:
+- ענה תמיד בעברית טבעית, זורמת, חמה ומקצועית – בדיוק כמו בשיחה מול ChatGPT או Gemini, וללא תבניות רובוטיות.
+- השתמש בכלים (Functions) כדי לקבל מידע על חיילים, לתעד שיחות 1-על-1, להקצות נע"ת, או לבדוק שחרורים.
+- נסח את התשובה בצורה ברורה, מכבדת ומעצימה, תוך דגש על פיתוח אישי של החיילים, דאגה לרווחתם ומעקב שגרות פיקוד.
+"""
 
 
 class HRAgent:
-    def __init__(self, repo: TaskRepository):
+    def __init__(self, repo: TaskRepository, api_key: Optional[str] = None):
         self.repo = repo
+        self.api_key = api_key or os.getenv("GEMINI_API_KEY", "")
+        self.llm = LLMClient(api_key=self.api_key) if self.api_key else None
 
-    def handle_message(self, text: str) -> str:
+    async def handle_message(self, text: str, history: Optional[list[dict[str, Any]]] = None) -> str:
+        if self.llm:
+            tools = [
+                {
+                    "name": "get_soldier_profile",
+                    "description": "קבלת פרופיל חייל מלא כולל צוות, דרגה, סטטוס ת\"ש, מצטיין/אקדמי, תאריך שחרור, נע\"ת והערות",
+                    "parameters": {
+                        "type": "OBJECT",
+                        "properties": {
+                            "soldier_name": {"type": "STRING", "description": "שם החייל המלא או החלקי"}
+                        },
+                        "required": ["soldier_name"],
+                    },
+                },
+                {
+                    "name": "list_soldiers_by_team",
+                    "description": "הצגת רשימת החיילים המשובצים בצוות מסוים",
+                    "parameters": {
+                        "type": "OBJECT",
+                        "properties": {
+                            "team_name": {"type": "STRING", "description": "שם הצוות"}
+                        },
+                        "required": ["team_name"],
+                    },
+                },
+                {
+                    "name": "record_one_on_one",
+                    "description": "תיעוד שיחת 1-על-1 אישית שבוצעה עם חייל והערות מהשיחה",
+                    "parameters": {
+                        "type": "OBJECT",
+                        "properties": {
+                            "soldier_name": {"type": "STRING", "description": "שם החייל"},
+                            "notes": {"type": "STRING", "description": "עיקרי השיחה והתובנות האישיות/מקצועיות"}
+                        },
+                        "required": ["soldier_name", "notes"],
+                    },
+                },
+                {
+                    "name": "assign_naat",
+                    "description": "שיבוץ או עדכון נע\"ת (נושא אחריות תחומי/תפקיד משני) לחייל",
+                    "parameters": {
+                        "type": "OBJECT",
+                        "properties": {
+                            "soldier_name": {"type": "STRING", "description": "שם החייל"},
+                            "duty_name": {"type": "STRING", "description": "שם הנע\"ת/התפקיד"}
+                        },
+                        "required": ["soldier_name", "duty_name"],
+                    },
+                },
+                {
+                    "name": "get_upcoming_releases",
+                    "description": "בדיקת חיילים שמשתחררים בתקופה הקרובה",
+                    "parameters": {
+                        "type": "OBJECT",
+                        "properties": {
+                            "months_ahead": {"type": "INTEGER", "description": "כמות החודשים קדימה (למשל 3 או 6)"}
+                        },
+                        "required": ["months_ahead"],
+                    },
+                },
+                {
+                    "name": "get_soldier_naat_history",
+                    "description": "קבלת היסטוריית כל הנע\"תים שביצע החייל בעבר ובהווה",
+                    "parameters": {
+                        "type": "OBJECT",
+                        "properties": {
+                            "soldier_name": {"type": "STRING", "description": "שם החייל"}
+                        },
+                        "required": ["soldier_name"],
+                    },
+                },
+                {
+                    "name": "update_mentorship_contract",
+                    "description": "הגדרה או עדכון של חוזה חניכה שנתי לחייל (יעד אישי ויעד מקצועי)",
+                    "parameters": {
+                        "type": "OBJECT",
+                        "properties": {
+                            "soldier_name": {"type": "STRING", "description": "שם החייל"},
+                            "personal_goal": {"type": "STRING", "description": "יעד אישי/מנהיגותי"},
+                            "professional_goal": {"type": "STRING", "description": "יעד טכנולוגי/מקצועי"}
+                        },
+                        "required": ["soldier_name", "personal_goal", "professional_goal"],
+                    },
+                },
+                {
+                    "name": "get_mentorship_contract",
+                    "description": "הצגת חוזה החניכה השנתי של חייל (יעדים, מועד שיחת 1-על-1 אחרונה ותאריך יעד הבא)",
+                    "parameters": {
+                        "type": "OBJECT",
+                        "properties": {
+                            "soldier_name": {"type": "STRING", "description": "שם החייל"}
+                        },
+                        "required": ["soldier_name"],
+                    },
+                },
+            ]
+
+            async def tool_executor(name: str, args: dict[str, Any]) -> Any:
+                if name == "get_soldier_profile":
+                    soldier = self.repo.get_soldier_by_name(args["soldier_name"])
+                    if not soldier:
+                        return {"error": f"חייל בשם '{args['soldier_name']}' לא נמצא במערכת"}
+                    team = self.repo.get_team(soldier.team_id) if soldier.team_id else None
+                    return {
+                        "full_name": soldier.full_name,
+                        "team": team.name if team else "ללא צוות",
+                        "service_type": soldier.service_type,
+                        "rank": soldier.rank,
+                        "tash_status": soldier.tash_status,
+                        "academic_status": soldier.academic_status,
+                        "excellence_status": soldier.excellence_status,
+                        "release_date": soldier.release_date,
+                        "current_naat": soldier.current_naat,
+                        "commander_notes": soldier.commander_notes,
+                    }
+                elif name == "list_soldiers_by_team":
+                    team = self.repo.get_team_by_name(args["team_name"])
+                    if not team:
+                        return {"error": f"צוות '{args['team_name']}' לא נמצא"}
+                    soldiers = self.repo.list_soldiers(team_id=team.id)
+                    return {"team": team.name, "soldiers": [s.full_name for s in soldiers]}
+                elif name == "record_one_on_one":
+                    soldier = self.repo.get_soldier_by_name(args["soldier_name"])
+                    if not soldier:
+                        return {"error": f"חייל בשם '{args['soldier_name']}' לא נמצא"}
+                    contract = self.repo.record_one_on_one_meeting(soldier.id, notes=args.get("notes"))
+                    return {"status": "success", "soldier": soldier.full_name, "contract": contract}
+                elif name == "assign_naat":
+                    soldier = self.repo.get_soldier_by_name(args["soldier_name"])
+                    if not soldier:
+                        return {"error": f"חייל בשם '{args['soldier_name']}' לא נמצא"}
+                    self.repo.assign_naat(soldier.id, args["duty_name"])
+                    return {"status": "success", "soldier": soldier.full_name, "duty": args["duty_name"]}
+                elif name == "get_upcoming_releases":
+                    months = args.get("months_ahead", 3)
+                    days = months * 30
+                    releases = self.repo.get_upcoming_releases(days_ahead=days)
+                    return {"releases": [{"full_name": r.full_name, "release_date": r.release_date} for r in releases]}
+                elif name == "get_soldier_naat_history":
+                    soldier = self.repo.get_soldier_by_name(args["soldier_name"])
+                    if not soldier:
+                        return {"error": f"חייל בשם '{args['soldier_name']}' לא נמצא"}
+                    history_items = self.repo.get_naat_history(soldier.id)
+                    return {"soldier": soldier.full_name, "history": history_items}
+                elif name == "update_mentorship_contract":
+                    soldier = self.repo.get_soldier_by_name(args["soldier_name"])
+                    if not soldier:
+                        return {"error": f"חייל בשם '{args['soldier_name']}' לא נמצא"}
+                    res = self.repo.set_mentorship_goals(
+                        soldier.id,
+                        personal_goal=args.get("personal_goal", ""),
+                        professional_goal=args.get("professional_goal", ""),
+                    )
+                    return {"status": "success", "soldier": soldier.full_name, "contract": res}
+                elif name == "get_mentorship_contract":
+                    soldier = self.repo.get_soldier_by_name(args["soldier_name"])
+                    if not soldier:
+                        return {"error": f"חייל בשם '{args['soldier_name']}' לא נמצא"}
+                    contract = self.repo.get_mentorship_contract(soldier.id)
+                    return {"soldier": soldier.full_name, "contract": contract}
+                return {"error": f"Unknown tool {name}"}
+
+            return await self.llm.chat(
+                system_instruction=HR_SYSTEM_INSTRUCTION,
+                user_message=text,
+                history=history,
+                tools=tools,
+                tool_executor=tool_executor,
+            )
+
+        return self._fallback_handle_message(text)
+
+    def _fallback_handle_message(self, text: str) -> str:
         # 0. Record 1-on-1 meeting: e.g. "ביצעתי שיחת 1-על-1 עם דניאל כהן: דיברנו על יעדים אישיים"
         if any(w in text for w in ["שיחת 1-על-1", "שיחה 1-על-1", "שיחה אישית"]) and any(w in text for w in ["ביצעתי", "קיימתי", "תיעדתי", "רשום", "סיימתי"]):
             match = re.search(r"(?:ביצעתי|קיימתי|תיעדתי|רשום|סיימתי)\s*שיח(?:ת|ה)\s*(?:1-על-1|אישית)\s*(?:עם)?\s*([^:]+):\s*(.+)$", text)
