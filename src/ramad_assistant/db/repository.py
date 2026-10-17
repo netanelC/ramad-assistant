@@ -317,21 +317,43 @@ class TaskRepository:
         """
         with self._get_connection() as conn:
             rows = conn.execute(query, (today_str, limit_str)).fetchall()
-            return [
-                Soldier(
-                    id=row["id"],
-                    full_name=row["full_name"],
-                    team_id=row["team_id"],
-                    service_type=row["service_type"],
-                    release_date=row["release_date"],
-                    current_naat=row["current_naat"],
-                    education=row["education"],
-                    commander_notes=row["commander_notes"],
-                    created_at=row["created_at"],
-                    updated_at=row["updated_at"],
-                )
-                for row in rows
-            ]
+            return [self._row_to_soldier(row) for row in rows]
+
+    def update_soldier(self, soldier_id: int, updates: dict[str, Any]) -> Optional[Soldier]:
+        allowed_fields = [
+            "full_name", "team_id", "service_type", "rank", "tash_status",
+            "academic_status", "excellence_status", "excellence_notes",
+            "release_date", "current_naat", "education", "commander_notes"
+        ]
+        set_clauses = []
+        values = []
+        for f in allowed_fields:
+            if f in updates:
+                set_clauses.append(f"{f} = ?")
+                values.append(updates[f])
+
+        if not set_clauses:
+            return self.get_soldier(soldier_id)
+
+        now = datetime.now(timezone.utc).isoformat()
+        set_clauses.append("updated_at = ?")
+        values.append(now)
+        values.append(soldier_id)
+
+        with self._get_connection() as conn:
+            conn.execute(
+                f"UPDATE soldiers SET {', '.join(set_clauses)} WHERE id = ?",
+                values,
+            )
+            conn.commit()
+
+        return self.get_soldier(soldier_id)
+
+    def delete_soldier(self, soldier_id: int) -> bool:
+        with self._get_connection() as conn:
+            cursor = conn.execute("DELETE FROM soldiers WHERE id = ?", (soldier_id,))
+            conn.commit()
+            return cursor.rowcount > 0
 
     # --- Na'at History Methods ---
     def assign_naat(self, soldier_id: int, duty_name: str, start_date: Optional[str] = None) -> bool:
@@ -531,6 +553,35 @@ class TaskRepository:
                 created_at=row["created_at"],
                 updated_at=row["updated_at"],
             )
+
+    def update_task(self, task_id: int, updates: dict[str, Any]) -> Optional[PersonalTask]:
+        allowed_fields = [
+            "title", "details", "tagab_at", "priority", "status",
+            "related_team_id", "related_soldier_id"
+        ]
+        set_clauses = []
+        values = []
+        for f in allowed_fields:
+            if f in updates:
+                set_clauses.append(f"{f} = ?")
+                values.append(updates[f])
+
+        if not set_clauses:
+            return self.get_task(task_id)
+
+        now = datetime.now(timezone.utc).isoformat()
+        set_clauses.append("updated_at = ?")
+        values.append(now)
+        values.append(task_id)
+
+        with self._get_connection() as conn:
+            conn.execute(
+                f"UPDATE personal_tasks SET {', '.join(set_clauses)} WHERE id = ?",
+                values,
+            )
+            conn.commit()
+
+        return self.get_task(task_id)
 
     def update_task_status(self, task_id: int, status: str) -> Optional[PersonalTask]:
         now = datetime.now(timezone.utc).isoformat()
