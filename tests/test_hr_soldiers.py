@@ -2,19 +2,8 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from ramad_assistant.gateway.app import create_app
-from ramad_assistant.adapters.telegram import TelegramAdapter
 from ramad_assistant.db.repository import TaskRepository
 from ramad_assistant.db.seed_soldiers import seed_soldiers_from_csv
-
-
-class SpyTelegramAdapter(TelegramAdapter):
-    def __init__(self, bot_token: str = "fake-token"):
-        super().__init__(bot_token=bot_token)
-        self.sent_messages: list[tuple[str, str]] = []
-
-    async def send_message(self, recipient_id: str, text: str) -> bool:
-        self.sent_messages.append((recipient_id, text))
-        return True
 
 
 @pytest.mark.asyncio
@@ -34,53 +23,30 @@ async def test_seed_soldiers_from_csv_and_query_profile(tmp_path):
     seed_count = seed_soldiers_from_csv(str(csv_file), task_repo)
     assert seed_count == 2
 
-    spy_adapter = SpyTelegramAdapter()
-    app = create_app(
-        messenger_adapter=spy_adapter,
-        allowed_user_ids=["999888"],
-        task_repo=task_repo,
-    )
+    app = create_app(task_repo=task_repo)
 
     # 1. Query individual soldier profile
-    payload_profile = {
-        "update_id": 10009,
-        "message": {
-            "message_id": 80,
-            "from": {"id": 999888, "first_name": "Ramad"},
-            "chat": {"id": 999888, "type": "private"},
-            "date": 1728560000,
-            "text": "פרופיל חייל ישראל ישראלי"
-        }
-    }
-
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        res1 = await client.post("/webhook/telegram", json=payload_profile)
+        res1 = await client.post(
+            "/api/v1/agent/chat",
+            json={"text": "פרופיל חייל ישראל ישראלי", "user_id": "999888"},
+        )
 
     assert res1.status_code == 200
-    assert len(spy_adapter.sent_messages) == 1
-    _, reply1 = spy_adapter.sent_messages[0]
+    reply1 = res1.json()["response_text"]
     assert "ישראל ישראלי" in reply1
     assert "צוות 1" in reply1
     assert "MANDATORY" in reply1
     assert "אחראי הוואי מדורי" in reply1
 
     # 2. Query team soldiers list
-    payload_team = {
-        "update_id": 10010,
-        "message": {
-            "message_id": 81,
-            "from": {"id": 999888, "first_name": "Ramad"},
-            "chat": {"id": 999888, "type": "private"},
-            "date": 1728560000,
-            "text": "מי החיילים בצוות 1?"
-        }
-    }
-
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        res2 = await client.post("/webhook/telegram", json=payload_team)
+        res2 = await client.post(
+            "/api/v1/agent/chat",
+            json={"text": "מי החיילים בצוות 1?", "user_id": "999888"},
+        )
 
     assert res2.status_code == 200
-    assert len(spy_adapter.sent_messages) == 2
-    _, reply2 = spy_adapter.sent_messages[1]
+    reply2 = res2.json()["response_text"]
     assert "חיילי צוות 1" in reply2
     assert "ישראל ישראלי" in reply2

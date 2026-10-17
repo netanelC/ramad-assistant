@@ -2,13 +2,14 @@
 
 **Ramad Assistant** הינה מערכת **Multi-Agent** מתקדמת מבוססת בינה מלאכותית (LLM-Native), שפותחה במיוחד עבור **ראש מדור (רמ"ד) טכנולוגי-מודיעיני**.
 
-המערכת פועלת כעוזר אישי, מנהל משימות מבצעי, מנהל הון אנושי ופיתוח אנשים, ו**"מראה פיקודית"** סוקרטית. המערכת מחוברת לממשק **Telegram** (תומכת בקלט קולי וטקסטואלי) ומופעלת על גבי **Google Cloud Run** עם מודל **Google Gemini 3.8 Flash** וארכיטקטורת **LangGraph**.
+המערכת פועלת כעוזר אישי, מנהל משימות מבצעי, מנהל הון אנושי ופיתוח אנשים, ו**"מראה פיקודית"** סוקרטית. המערכת כוללת **אפליקציית מובייל ייעודית (Flutter Android)** ושרת **FastAPI Gateway** מנוהל ב-**Google Cloud Run** עם מודל **Google Gemini 3.8 Flash** וארכיטקטורת **LangGraph**.
 
 ---
 
 ## 📑 תוכן עניינים
 - [חזון ועקרונות פיקודיים (תפיסת תפקיד)](#-חזון-ועקרונות-פיקודיים-תפיסת-תפקיד)
 - [ארכיטקטורת המערכת והסוכנים](#-ארכיטקטורת-המערכת-והסוכנים)
+- [אפליקציית המובייל הייעודית (Flutter)](#-אפליקציית-המובייל-הייעודית-flutter)
 - [מודל הנתונים (Database Schema)](#-מודל-הנתונים-database-schema)
 - [מנוע השיחה וה-Tool Calling](#-מנוע-השיחה-וה-tool-calling)
 - [יכולות מרכזיות ודוגמאות שימוש](#-יכולות-מרכזיות-ודוגמאות-שימוש)
@@ -41,11 +42,11 @@
 
 ## 🏗️ ארכיטקטורת המערכת והסוכנים
 
-המערכת בנויה בארכיטקטורת **Multi-Agent** עם נתב-על (Supervisor) וסוכנים מתמחים:
+המערכת בנויה בארכיטקטורת **Multi-Agent** עם נתב-על (Supervisor), סוכנים מתמחים ו-REST API נקי:
 
 ```mermaid
 flowchart TD
-    User["משתמש (Telegram - קול / טקסט)"] --> Gateway["FastAPI Gateway / Webhook"]
+    User["אפליקציית מובייל Flutter (Android)\nטאבים: סוכן, אנשים, משימות"] --> Gateway["FastAPI REST API (/api/v1/*)"]
     Gateway --> AudioProc["Voice Processor (Gemini Multimodal Transcription)"]
     Gateway --> Supervisor["Supervisor Router (Gemini 3.8 Flash Intent Classifier)"]
     
@@ -59,10 +60,10 @@ flowchart TD
         MentorAgent <--> DoctrineDB["Doctrine Vector Store (Embeddings & Principles)"]
     end
 
-    TaskAgent --> Responder["תשובה שיחתית טבעית בעברית (Gemini Tool Calling)"]
+    TaskAgent --> Responder["תשובה שיחתית טבעית + Action Cards"]
     HRAgent --> Responder
     MentorAgent --> Responder
-    Responder --> Gateway --> TelegramOut["Telegram Bot Client"]
+    Responder --> Gateway --> User
 ```
 
 ### פירוט הסוכנים:
@@ -72,6 +73,17 @@ flowchart TD
   מנהל את המידע מתוך קובץ האנשים והפיתוח של המדור: פרופילי חיילים, חלוקת צוותים, מעקב שיחות 1-על-1, נע"תים (נושאי אחריות תחומיים), שחרורים קרובים, וחוזי חניכה שנתיים.
 - **סוכן מנטור פיקודי ומומחה המערכת ([`CommandMentorAgent`](file:///home/netancoh/Desktop/MyProjects/ramad-assistant/src/ramad_assistant/orchestrator/mentor_agent.py))**:  
   משמש כיועץ סוקרטי אישי ומלווה פיקודי. מחזיק במאגר וקטורי של תורת הפיקוד, מוביל את שגרת התחקור העצמי הדו-שבועי (3 שאלות שיקוף), מנהל שיחות חופשיות וסמול-טוק, ומכיר לעומק את כל יכולות וארכיטקטורת המערכת.
+
+---
+
+## 📱 אפליקציית המובייל הייעודית (Flutter)
+
+אפליקציית הנייד ממוקמת בתיקייה `mobile/` ומספקת חוויית שליטה פיקודית עשירה ומותאמת אישית:
+- **3 מסכי ליבה בניווט תחתון (Bottom Navigation)**:
+  1. **סוכן (Agent)**: מסך שיחה חי עם הסוכן, הקלטה קולית (`Voice-In / Text-Out`), כפתור דוח בוקר מהיר וכרטיסי פעולה חכמים (Action Cards) עם Deeplink ישיר לטאבים האחרים.
+  2. **אנשים (People)**: צפייה וחיפוש חיילים וצוותים, הוספת ועריכת חייל, סינון שחרורים קרובים (3 חודשים / 6 חודשים), ותיעוד שיחות 1-על-1.
+  3. **משימות (Tasks)**: לוח משימות ותג"בים עם חיווי עדיפות, Swipe-to-Complete, סינון פתוחות/הושלמו, ומודאל דחייה המחייב הזנת סיבה עניינית.
+- **עיצוב Material 3 RTL**: תמיכה מלאה בכיווניות ימין-לשמאל, גופן נקי, ופלטת צבעים פיקודית מודרנית.
 
 ---
 
@@ -96,7 +108,8 @@ flowchart TD
 המערכת פועלת במודל **Conversational AI מלא**:
 - **Native Tool Calling**: הסוכנים אינם פולטים תבניות טקסט קבועות ("רובוטיות"). הם מפעילים פונקציות מוגדרות מול מסד הנתונים, מקבלים את התוצאות, ומנסחים תשובה זורמת וחכמה בעברית טבעית (כמו בשיחה מול ChatGPT או Gemini).
 - **זיכרון שיחתי מתמשך (Multi-Turn Chat History)**: שמירת 15 חילופי הדברים האחרונים פר משתמש, המאפשרת שאלות המשך טבעיות בהקשר מלא (*"מי המפקד שלו?"*, *"תמחק אותה"*, *"מה עוד נשאר?"*).
-- **Voice In / Text Out**: הודעות קוליות בטלגרם מתומללות ישירות באמצעות היכולות המולטי-מודאליות של Gemini, ומנותבות מיידית לסוכן המתאים.
+- **Voice In / Text Out**: הקלטות קוליות מתוך האפליקציה מתומללות ישירות באמצעות היכולות המולטי-מודאליות של Gemini, ומנותבות מיידית לסוכן המתאים.
+- **כרטיסי פעולה אינטראקטיביים (Action Cards)**: לצד המענה הטקסטואלי, ה-API מחזיר כרטיסים לחיצים המאפשרים מעבר מיידי לכרטיס החייל או למשימה המדוברת.
 
 ---
 
@@ -131,35 +144,40 @@ flowchart TD
 
 ### דרישות מקדימות:
 - Python 3.12 ומעלה.
+- Flutter SDK (עבור אפליקציית הנייד).
 - מפתח API פעיל מ-Google AI Studio (`GEMINI_API_KEY`).
-- טוקן לבוט טלגרם מ-BotFather (`TELEGRAM_BOT_TOKEN`).
 
-### שלבי התקנה:
+### 1. הרצת שרת ה-Backend:
 ```bash
-# 1. שכפול המאגר
+# שכפול המאגר
 git clone https://github.com/netanelC/ramad-assistant.git
 cd ramad-assistant
 
-# 2. יצירת סביבה וירטואלית והתקנת תלויות
+# יצירת סביבה וירטואלית והתקנת תלויות
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 
-# 3. הגדרת משתני סביבה בקובץ .env
+# הגדרת משתני סביבה בקובץ .env
 cat <<EOF > .env
-TELEGRAM_BOT_TOKEN="your_telegram_bot_token"
 GEMINI_API_KEY="your_gemini_api_key"
-ALLOWED_TELEGRAM_USER_IDS="123456789"
-API_SECRET_KEY="your_internal_secret_key"
+API_SECRET="your_internal_secret_key"
 DATABASE_URL="sqlite:///./ramad_tasks.db"
 EOF
 
-# 4. זריעת נתוני דוקטרינה וחיילים
+# זריעת נתוני דוקטרינה וחיילים
 python -m ramad_assistant.db.seed_doctrine
 python -m ramad_assistant.db.seed_soldiers "ניהול - אנשים ופיתוח.csv"
 
-# 5. הרצת השרת המקומי
+# הרצת שרת ה-API
 uvicorn ramad_assistant.gateway.app:app --reload --port 8080
+```
+
+### 2. הרצת אפליקציית ה-Flutter:
+```bash
+cd mobile
+flutter pub get
+flutter run
 ```
 
 ---
@@ -169,12 +187,10 @@ uvicorn ramad_assistant.gateway.app:app --reload --port 8080
 המערכת רצה ומנוהלת ב-**Google Cloud Run**:
 
 ```bash
-# 1. הכנת קובץ .env.yaml לפריסה (מאובטח ואינו במאגר הציבורי)
+# 1. הכנת קובץ .env.yaml לפריסה
 cat <<EOF > .env.yaml
-TELEGRAM_BOT_TOKEN: "your_bot_token"
 GEMINI_API_KEY: "your_gemini_api_key"
-ALLOWED_TELEGRAM_USER_IDS: "123456789"
-API_SECRET_KEY: "your_secret"
+API_SECRET: "your_secret"
 EOF
 
 # 2. פריסה ל-Cloud Run
@@ -183,17 +199,13 @@ gcloud run deploy ramad-assistant \
   --region me-west1 \
   --allow-unauthenticated \
   --env-vars-file .env.yaml
-
-# 3. הגדרת Webhook מול Telegram
-curl -F "url=https://<YOUR-CLOUD-RUN-URL>/webhook/telegram" \
-  https://api.telegram.org/bot<YOUR-BOT-TOKEN>/setWebhook
 ```
 
 ---
 
 ## 🧪 בדיקות אוטומטיות (Testing)
 
-חבילת הבדיקות כוללת 30 בדיקות יחידה ואינטגרציה מקצה לקצה (E2E), המכסות משימות, כוח אדם, מנטורינג, בדיקות שמע, אימות הרשאות טלגרם ובידוד תהליכים (ADR-0002):
+חבילת הבדיקות כוללת 30 בדיקות יחידה ואינטגרציה מקצה לקצה (E2E), המכסות משימות, כוח אדם, מנטורינג, שמע, API של המובייל ובידוד תהליכים (ADR-0002):
 
 ```bash
 # הרצת כל הבדיקות
